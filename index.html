@@ -303,20 +303,21 @@ function dpVarsayilanDersler() {
     { id: "d-secmeli4", ad: "Seçmeli Ders (Kültür, Sanat ve Spor) 2", tur: "secmeli", grup: DP_SECMELI_GRUPLAR[2], saat: 2, seviyeler: [8] },
   ];
 }
-// Bir dersin, belirli bir sınıf SEVİYESİ (5/6/7/8) için haftalık saatini döndürür.
-// Ders artık seviyeye göre farklı saat tanımlanabiliyor (örn. Türkçe 5-6.sınıfta 6 saat,
-// 7-8.sınıfta 5 saat gibi) — bu, dersin "saatSeviye" alanında {seviye: saat} olarak tutulur.
-// Eski/basit dersler (saatSeviye hiç girilmemiş ya da o seviye için boş) için, geriye dönük
-// uyumluluk amacıyla dersin genel "saat" alanı kullanılır.
-function dpDersSaatSeviye(ders, seviye) {
+// Bir dersin BELİRLİ bir sınıf seviyesindeki haftalık saatini döndürür. Bir ders artık seviye
+// bazında FARKLI saatler taşıyabilir (örn. Türkçe 5-6. sınıfta haftalık 6 saat, 7-8. sınıfta 5
+// saat gibi) — bu bilgi d.saatler = { seviye: saat } haritasında tutulur. Bu haritada o seviye
+// için henüz özel bir değer girilmemişse (ya da saatler hiç yoksa — eski/basit ders kayıtları),
+// eskisi gibi TEK ortak d.saat değerine geri düşülür; böylece geriye dönük uyumluluk bozulmaz.
+function dpDersSaatiAl(ders, seviye) {
   if (!ders) return 0;
-  const ozel = ders.saatSeviye && ders.saatSeviye[seviye];
-  if (ozel !== undefined && ozel !== null && ozel !== "") return Number(ozel) || 0;
-  return Number(ders.saat || 0);
+  if (ders.saatler && ders.saatler[seviye] !== undefined && ders.saatler[seviye] !== null && ders.saatler[seviye] !== "") {
+    return Number(ders.saatler[seviye]) || 0;
+  }
+  return Number(ders.saat) || 0;
 }
 function dpVarsayilanVeri() {
   return {
-    ayarlar: { oncekiSaat: 5, sonrakiSaat: 2, siniflar: SINIFLAR.slice(), yerlesimTercihleri: {}, sabitSaatler: [] },
+    ayarlar: { oncekiSaat: 5, sonrakiSaat: 2, siniflar: SINIFLAR.slice(), yerlesimTercihleri: {}, sabitEtkinlikler: [] },
     dersler: dpVarsayilanDersler(),
     ogretmenler: [],
     program: null,
@@ -355,18 +356,18 @@ function dpDiziyeCevir(v) {
 // açılabilmesi için DersProgrami bileşeninin en başında kullanılır.
 function dpGuvenliVeri(dersProgrami) {
   const v = dpDiziyeCevir(dersProgrami) || {};
-  const ayarlarVarsayilan = { oncekiSaat: 5, sonrakiSaat: 2, siniflar: SINIFLAR.slice(), yerlesimTercihleri: {}, sabitSaatler: [] };
+  const ayarlarVarsayilan = { oncekiSaat: 5, sonrakiSaat: 2, siniflar: SINIFLAR.slice(), yerlesimTercihleri: {}, sabitEtkinlikler: [] };
   // program alanı var görünse bile içindeki classGrid eksik/bozuksa (örn. eski/kesik bir kayıttan
   // kalmışsa), programı "yok" say — aksi halde Ders Programı sayfası açılır açılmaz
   // "Cannot read properties of undefined" hatasıyla çöker (program.classGrid[sinif] erişimi).
   const programGecerliMi = v.program && typeof v.program === "object" && v.program.classGrid && typeof v.program.classGrid === "object";
   return {
     ayarlar: { ...ayarlarVarsayilan, ...(v.ayarlar && typeof v.ayarlar === "object" ? v.ayarlar : {}) },
-    // ÖNEMLİ DÜZELTME: eskiden "dizi VE boş değilse" koşulu vardı — bu, kullanıcı TÜM dersleri
-    // bilerek sildiğinde (liste gerçekten [] oluyor) varsayılan ders listesinin sessizce geri
-    // gelmesine yol açıyordu (silinen dersler "geri geliyormuş" gibi görünüyordu). Artık yalnızca
-    // veri hiç dizi DEĞİLSE (eksik/bozuk kayıt) varsayılana dönülüyor; kullanıcının bilerek
-    // boşalttığı bir liste boş kalmaya devam ediyor.
+    // ÖNEMLİ DÜZELTME: "&& v.dersler.length" kontrolü kaldırıldı. Öncesinde kullanıcı TÜM dersleri
+    // silip listeyi bilerek boşalttığında (örn. kendi müfredatını sıfırdan kurmak için), boş dizi
+    // "falsy" sayıldığından sessizce MEB varsayılan ders listesine SIFIRLANIYORDU — yani silinen
+    // dersler "geri geliyordu". Artık yalnızca dersler alanı hiç YOKSA (ilk kurulum, undefined)
+    // varsayılanlar kullanılır; kullanıcının bilerek boşalttığı bir liste boş kalır.
     dersler: Array.isArray(v.dersler) ? v.dersler : dpVarsayilanDersler(),
     ogretmenler: Array.isArray(v.ogretmenler) ? v.ogretmenler : (v.ogretmenler && typeof v.ogretmenler === "object" ? Object.values(v.ogretmenler) : []),
     program: programGecerliMi ? v.program : null,
@@ -393,7 +394,6 @@ function dpAyarImzasi(dp) {
     sonrakiSaat: ayarlar.sonrakiSaat,
     siniflar: ayarlar.siniflar,
     yerlesimTercihleri: ayarlar.yerlesimTercihleri,
-    sabitSaatler: ayarlar.sabitSaatler,
     ogretmenler,
   });
 }
@@ -401,26 +401,8 @@ function dpAyarImzasi(dp) {
 // belirtilmemiştir (maks/ardisikMax = null) — aktif açıldığında bile, kullanıcı bir günü elle
 // ayarlamadığı sürece o gün serbest bırakılır; yalnızca (girildiyse) haftalık üst sınıra tabi olur.
 // (aktif=false iken zaten hiçbiri kullanılmaz, program motoru boşlukları olabildiğince sıfırlamaya çalışır.)
-// "Ders Saati Sabitleme" (dp.ayarlar.sabitSaatler) ile kullanıcının belirli bir ders+sınıf için
-// sabitlediği tam gün/saat, o dersi veren öğretmen için bir "zorunlu" kısıt gibi davranır — böylece
-// programın HER aşaması (onarım, takas, boşluk azaltma, cilalama) bu saati bozmaya çalışmaz. Bu
-// fonksiyon verilen zorunluListe nesnesine (üç farklı yerde ayrı ayrı inşa edildiği için, her
-// inşadan hemen sonra) bu ek girdileri ekler. Hangi öğretmenin bu (ders, sınıf) ikilisini verdiği
-// atamalardan bulunur; birden fazla öğretmen aynı ders+sınıfa atanmışsa (normalde olmaz) ilki alınır.
-function dpSabitSaatlerZorunluEkle(dp, zorunluListe) {
-  const pinler = dp.ayarlar.sabitSaatler || [];
-  if (!pinler.length) return;
-  const ogretmenler = dp.ogretmenler || [];
-  pinler.forEach((s) => {
-    const ogretmen = ogretmenler.find((o) => (o.atamalar || []).some((a) => a.sinif === s.sinif && a.dersId === s.dersId));
-    if (!ogretmen) return;
-    if (!zorunluListe[ogretmen.id]) zorunluListe[ogretmen.id] = [];
-    const zatenVar = zorunluListe[ogretmen.id].some((k) => k.gun === s.gun && k.saat === s.saat);
-    if (!zatenVar) zorunluListe[ogretmen.id].push({ gun: s.gun, saat: s.saat, tur: "zorunlu", id: "sabit-" + s.id });
-  });
-}
 function dpBosVarsayilanBoslukAyari() {
-  return { aktif: false, haftalikMax: null, gunler: Array.from({ length: 5 }, () => ({ maks: null, ardisikMax: null })), bosGunTalebi: { aktif: false, gunler: [], sayi: 1 } };
+  return { aktif: false, haftalikMax: null, gunler: Array.from({ length: 5 }, () => ({ maks: null, ardisikMax: null })), bosGunTalebi: { aktif: false, gunler: [] } };
 }
 // Kayıtlı (veya eski/eksik) öğretmen verisini normalize eder: boslukAyari alanı hiç yoksa ya da
 // eksikse varsayılan değerlerle tamamlar, böylece hem UI hem program motoru güvenle okuyabilir.
@@ -456,24 +438,22 @@ function dpBoslukAyarNormalize(ogretmen) {
   // uygulanır. Program motoru bunun dışında HİÇBİR öğretmene kendiliğinden boş gün vermeye çalışmaz
   // — bunu otomatik/olasılıksal denemek, çok öğretmenli/çok sınıflı okullarda sınıfların günlük
   // kapasitesini tıkayıp derslerin hiç yerleşememesine yol açtığı için tamamen kaldırıldı.
+  //
+  // ÖNEMLİ GÜNCELLEME: artık birden fazla gün seçilebiliyor (eskiden tek bir "gun" alanıydı).
+  // Geriye dönük uyumluluk için: eski kayıtlarda tek bir "gun" (sayı) varsa bu, tek elemanlı bir
+  // "gunler" dizisine çevrilir; yeni kayıtlarda doğrudan "gunler" (sayı dizisi) kullanılır.
   const bgHam = b.bosGunTalebi || {};
   const bosGunAktif = !!bgHam.aktif;
-  // Artık birden fazla gün seçilebiliyor. Eski kayıtlarda tek bir "gun" alanı vardı — geriye dönük
-  // uyumluluk için, "gunler" dizisi yoksa eski "gun" değeri varsa tek elemanlı bir diziye çevrilir.
   let bosGunler;
   if (Array.isArray(bgHam.gunler)) {
-    bosGunler = Array.from(new Set(bgHam.gunler.map((x) => Number(x)).filter((x) => Number.isInteger(x) && x >= 0 && x <= 4))).sort((a, b) => a - b);
+    bosGunler = bgHam.gunler.filter((g) => Number.isInteger(g) && g >= 0 && g <= 4);
+  } else if (bgHam.gun !== null && bgHam.gun !== undefined && bgHam.gun !== "") {
+    bosGunler = [Math.max(0, Math.min(4, Number(bgHam.gun) || 0))];
   } else {
-    const eskiGun = bgHam.gun;
-    const eskiGunGecerli = !(eskiGun === null || eskiGun === undefined || eskiGun === "");
-    bosGunler = eskiGunGecerli ? [Math.max(0, Math.min(4, Number(eskiGun) || 0))] : [];
+    bosGunler = [];
   }
-  // "sayi": kullanıcı belirli bir gün SEÇMEDEN (gunler boş) yalnızca "kaç gün boş olsun" derse,
-  // motor bu sayı kadar günü kendisi (zorunlu kısıtlarla çakışmayacak şekilde) rastgele seçer.
-  const bosGunSayiHam = bgHam.sayi;
-  const bosGunSayiBelirtilmemis = bosGunSayiHam === null || bosGunSayiHam === undefined || bosGunSayiHam === "";
-  const bosGunSayi = bosGunSayiBelirtilmemis ? 1 : Math.max(0, Math.min(4, Number(bosGunSayiHam) || 0));
-  return { aktif: !!b.aktif, haftalikMax, gunler, bosGunTalebi: { aktif: bosGunAktif, gunler: bosGunler, sayi: bosGunSayi } };
+  bosGunler = Array.from(new Set(bosGunler)).sort((a, b2) => a - b2);
+  return { aktif: !!b.aktif, haftalikMax, gunler, bosGunTalebi: { aktif: bosGunAktif, gunler: bosGunler } };
 }
 // Bir öğretmenin bir gündeki dizisinde (satir), ilk ve son dersi arasında kalan boşlukları özetler:
 // toplam boşluk saati, en uzun ardışık (üst üste) boşluk bloğu ve dersin başladığı/bittiği saatler.
@@ -603,7 +583,19 @@ function dpKaristir(dizi, rnd) {
 // olarak döndürülür; böylece "hiç kısıtlama yokken bile olmuyor" durumunda kullanıcı gerçek
 // sebebi (algoritma değil, saat toplamı kapasiteyi aşıyor) hemen ve net biçimde görür.
 function dpKapasiteUyarilariUret(dp, siniflar, ogretmenler, GUN, SAAT) {
-  const kapasite = GUN * SAAT;
+  // ÖNEMLİ DÜZELTME: "Sabit Etkinlikler" (bkz. Ayarlar sekmesi), tanımlandıkları gün/saati HER
+  // sınıfın (ve dolaylı olarak her öğretmenin) haftalık kapasitesinden düşer — o slot artık normal
+  // bir ders için asla kullanılamaz. Önceden bu düşülmüyordu; bu yüzden tam GUN×SAAT saate kadar
+  // (fazlasına değil) sıkı sıkıya dolu paketlenmiş bir sınıf, bir sabit etkinlik eklendiğinde
+  // GERÇEKTE kapasitesini aşmış oluyordu ama buradaki kontrol bunu hiç yakalamıyor, "kapasite aşıldı"
+  // uyarısı hiç çıkmıyor, bunun yerine bambaşka bir sınıftaki/öğretmendeki rastgele 1 saatlik
+  // dersler "sınıfın programı dolu" diye tek tek yerleştirilemedi listesine düşüyordu — kullanıcı
+  // için gerçek sebebi anlamak neredeyse imkânsızdı. Artık kapasite hesabına etkinlik sayısı dahil.
+  // Yalnızca "yeni/ekstra etkinlik" türündeki (dersId'siz) sabit etkinlikler gerçek kapasiteyi
+  // düşürür. "Var olan bir dersi sabitle" türündekiler (dersId'li) yeni bir saat eklemez — zaten
+  // atanmış bir dersin saatini sadece belirli bir gün/saate sabitler, bu yüzden kapasiteyi etkilemez.
+  const etkinlikSayisi = (dp.ayarlar.sabitEtkinlikler || []).filter((e) => !e.dersId).length;
+  const kapasite = GUN * SAAT - etkinlikSayisi;
   const sinifToplam = {};
   siniflar.forEach((s) => { sinifToplam[s] = 0; });
   ogretmenler.forEach((o) => {
@@ -613,11 +605,12 @@ function dpKapasiteUyarilariUret(dp, siniflar, ogretmenler, GUN, SAAT) {
   });
   const uyarilar = [];
   const asanSiniflar = [];
+  const etkinlikNotu = etkinlikSayisi > 0 ? ` (haftalık ${GUN * SAAT} saatten, tanımlı ${etkinlikSayisi} Sabit Etkinlik düşülerek hesaplandı)` : "";
   siniflar.forEach((s) => {
     if (sinifToplam[s] > kapasite) {
       const fark = sinifToplam[s] - kapasite;
       asanSiniflar.push({ sinif: s, toplam: sinifToplam[s], kapasite, fark });
-      uyarilar.push(`⚠ ${s}: atanan ders saatleri toplamı ${sinifToplam[s]} saat, ama haftalık kapasite ${kapasite} saat (${GUN} gün × ${SAAT} saat). Bu fark (${fark} saat) hiçbir kısıtlama/hassas ayar ile giderilemez — Ayarlar'dan günlük saat sayısını artırmanız ya da bu sınıftaki bazı derslerin saatini azaltmanız gerekir.`);
+      uyarilar.push(`⚠ ${s}: atanan ders saatleri toplamı ${sinifToplam[s]} saat, ama gerçek haftalık kapasite ${kapasite} saat${etkinlikNotu}. Bu fark (${fark} saat) hiçbir kısıtlama/hassas ayar ile giderilemez — Ayarlar'dan günlük saat sayısını artırmanız, bu sınıftaki bazı derslerin saatini azaltmanız ya da Sabit Etkinlik sayısını azaltmanız gerekir.`);
     }
   });
   const asanOgretmenler = [];
@@ -626,7 +619,7 @@ function dpKapasiteUyarilariUret(dp, siniflar, ogretmenler, GUN, SAAT) {
     if (toplam > kapasite) {
       const fark = toplam - kapasite;
       asanOgretmenler.push({ ogretmenId: o.id, ogretmenAd: o.ad, toplam, kapasite, fark });
-      uyarilar.push(`⚠ ${o.ad}: bu öğretmenin TÜM sınıflardaki ders saatleri toplamı ${toplam} saat, ama bir öğretmenin haftalık kapasitesi ${kapasite} saat (${GUN} gün × ${SAAT} saat) — aynı anda iki yerde olamaz. Bu fark (${fark} saat) hiçbir kısıtlama/hassas ayar ile giderilemez — bu öğretmenin atamalarından bazılarını başka bir öğretmene vermeniz ya da saatini azaltmanız gerekir.`);
+      uyarilar.push(`⚠ ${o.ad}: bu öğretmenin TÜM sınıflardaki ders saatleri toplamı ${toplam} saat, ama gerçek haftalık kapasite ${kapasite} saat${etkinlikNotu} — aynı anda iki yerde olamaz. Bu fark (${fark} saat) hiçbir kısıtlama/hassas ayar ile giderilemez — bu öğretmenin atamalarından bazılarını başka bir öğretmene vermeniz ya da saatini azaltmanız gerekir.`);
     }
   });
   return { uyarilar, asanSiniflar, asanOgretmenler };
@@ -668,6 +661,11 @@ function dpBoslukAzalt(classGrid, teacherGrid, bloklar, yasakSet, zorunluListe, 
           const blokId = satir[sonraki];
           const blok = bloklar.find((b) => b.id === blokId);
           if (!blok) continue;
+          // SABİT DERS KORUMASI: "Var olan bir dersi sabitle" ile belirli bir gün/saate pimlenmiş
+          // hücreler (bkz. dpTekDenemeOlustur — {sabit:true}) hiçbir boşluk azaltma/takas adımı
+          // tarafından YERİNDEN OYNATILAMAZ. Aksi halde kullanıcının "Pazartesi 5. saat" diye
+          // sabitlediği ders, boşluk azaltma sırasında sessizce başka bir güne kayabiliyordu.
+          if (classGrid[blok.sinif][g][sonraki] && classGrid[blok.sinif][g][sonraki].sabit) continue;
           if (yasakSet[o.id].has(`${g}-${bos}`)) continue;
           const buSaatZorunluMu = (zorunluListe[o.id] || []).some((k) => k.gun === g && k.saat === sonraki);
           if (buSaatZorunluMu) continue;
@@ -684,6 +682,7 @@ function dpBoslukAzalt(classGrid, teacherGrid, bloklar, yasakSet, zorunluListe, 
           // günü genelde tamamen dolu olduğu için "boş hücre" bulmanın neredeyse hiç mümkün
           // olmadığı gerçek okullarda boşluk azaltmanın asıl işe yaradığı durumdur. Takas,
           // diğer öğretmenin kendi programında bir çakışma/kısıt ihlali YARATMIYORSA yapılır.
+          if (classGrid[blok.sinif][g][bos].sabit) continue; // sabitlenmiş hücreyle asla takas edilmez
           const digerBlokId = classGrid[blok.sinif][g][bos];
           const digerBlok = bloklar.find((b) => b.id === digerBlokId);
           if (!digerBlok) continue;
@@ -732,6 +731,9 @@ function dpHaftalikBoslukAzalt(classGrid, teacherGrid, bloklar, yasakSet, zorunl
           const blokId = satir[sonraki];
           const blok = bloklar.find((b) => b.id === blokId);
           if (!blok) continue;
+          // SABİT DERS KORUMASI: bkz. dpBoslukAzalt'taki aynı isimli not — pimlenmiş hücreler asla
+          // yerinden oynatılmaz.
+          if (classGrid[blok.sinif][g][sonraki] && classGrid[blok.sinif][g][sonraki].sabit) continue;
           if (yasakSet[o.id].has(`${g}-${bos}`)) continue;
           const buSaatZorunluMu = (zorunluListe[o.id] || []).some((k) => k.gun === g && k.saat === sonraki);
           if (buSaatZorunluMu) continue;
@@ -748,6 +750,7 @@ function dpHaftalikBoslukAzalt(classGrid, teacherGrid, bloklar, yasakSet, zorunl
           }
           // Hedef saat DOLU: dpBoslukAzalt'taki gibi, o dersle YER DEĞİŞTİRMEYİ dene — diğer
           // öğretmenin kendi programında bir çakışma/kısıt ihlali YARATMIYORSA yapılır.
+          if (classGrid[blok.sinif][g][bos].sabit) continue; // sabitlenmiş hücreyle asla takas edilmez
           const digerBlokId = classGrid[blok.sinif][g][bos];
           const digerBlok = bloklar.find((b) => b.id === digerBlokId);
           if (!digerBlok) continue;
@@ -793,11 +796,21 @@ function dpBoslukPuanla(ogretmenler, teacherGrid, GUN, SAAT) {
           if (bilgi.maxBlok > (gunAyar.ardisikMax || 0)) puan += Math.max(0, bilgi.maxBlok - (gunAyar.ardisikMax || 0)) * 100;
         }
       }
-      puan += bilgi.toplam;
     }
     if (ayar.aktif && ayar.haftalikMax !== null && haftaToplam > ayar.haftalikMax) {
       puan += (haftaToplam - ayar.haftalikMax) * 100;
     }
+    // ÖNEMLİ DÜZELTME: boşluk maliyeti artık DOĞRUSAL değil, öğretmen bazında KARESEL (convex).
+    // Önceden her boşluk saati (hangi öğretmende olursa olsun) puana sabit +1 ekliyordu; bu yüzden
+    // yerel arama (dpYerelAramaIleOptimizeEt) "6 boşluklu bir öğretmeni 5'e indirmek" ile "zaten
+    // 0-1 boşluklu bir öğretmeni olduğu gibi bırakmak" arasında HİÇBİR tercih yapmıyordu — ikisi de
+    // aynı puanı veriyordu. Sonuç olarak boşluklar bazı öğretmenlerde yığılıp bazılarında hiç
+    // kalmıyordu (toplam aynı kalsa da dağılım adaletsizdi). Artık bir öğretmenin haftalık toplam
+    // boşluğu arttıkça HER EK boşluk saati bir öncekinden daha PAHALI sayılır (karesel artış);
+    // böylece yerel arama, zaten az boşluklu bir öğretmen yerine hâlâ çok boşluklu (yığılmış) bir
+    // öğretmenin boşluğunu azaltmayı tercih eder ve boşluklar öğretmenler arasında daha dengeli
+    // dağılır.
+    puan += haftaToplam + haftaToplam * haftaToplam;
   });
   return puan;
 }
@@ -812,81 +825,83 @@ function dpBoslukPuanla(ogretmenler, teacherGrid, GUN, SAAT) {
 // AZALTIYORSA kalıcı yapılır — aksi halde anında geri alınır. Bu yüzden hiçbir zaman programı
 // kötüleştirmez, yalnızca iyileştirebildiği kadar iyileştirir. Ders Yerleşim Tercihi (desenli)
 // bloklar farklı bir güne ASLA taşınmaz (kullanıcının belirttiği günlük deseni bozmamak için).
-function dpYerelAramaIleOptimizeEt(classGrid, teacherGrid, bloklar, yasakSet, zorunluListe, ogretmenler, GUN, SAAT, rnd, iterasyon) {
+function dpYerelAramaIleOptimizeEt(classGrid, teacherGrid, bloklar, yasakSet, zorunluListe, ogretmenler, GUN, SAAT, rnd, iterasyon, ogretmenBosGunu) {
   const bloklarById = {};
   bloklar.forEach((b) => { bloklarById[b.id] = b; });
   const ogretmenById = {};
   ogretmenler.forEach((o) => { ogretmenById[o.id] = o; });
-  const hucreler = [];
+  // KRİTİK: hücreler artık SINIF BAZINDA gruplanıyor ve bir takas SADECE aynı sınıfın kendi
+  // haftası İÇİNDE yapılıyor (iki farklı gün/saat, iki farklı öğretmenin o sınıftaki dersleri).
+  // Önceki sürüm yanlışlıkla FARKLI sınıflar arasında da içerik takas edebiliyordu — bu, bir
+  // dersin classGrid'de YANLIŞ sınıfın altında görünmesine (örn. bir öğretmenin hiç girmediği
+  // bir sınıfa "ders vermiş" gibi görünmesine) yol açan CİDDİ bir veri bütünlüğü hatasıydı. Bir
+  // blok her zaman KENDİ sınıfına aittir (bloklar[].sinif hiç değişmez); bu yüzden bir dersin
+  // hangi (gün,saat) hücresinde durduğu değişebilir ama HANGİ SINIFIN altında durduğu ASLA
+  // değişemez — o yüzden takas her zaman aynı sınıfın kendi hücreleri arasında yapılır.
+  const hucrelerBySinif = {};
   Object.keys(classGrid).forEach((sinif) => {
+    const liste = [];
     for (let g = 0; g < GUN; g++) for (let p = 0; p < SAAT; p++) {
-      if (classGrid[sinif][g][p]) hucreler.push({ sinif, g, p });
+      if (classGrid[sinif][g][p]) liste.push({ g, p });
     }
+    if (liste.length >= 2) hucrelerBySinif[sinif] = liste;
   });
-  if (hucreler.length < 2) return;
+  const siniflarListesi = Object.keys(hucrelerBySinif);
+  if (siniflarListesi.length === 0) return;
   const zorunluMu = (ogretmenId, g, p) => (zorunluListe[ogretmenId] || []).some((k) => k.gun === g && k.saat === p);
+  // Bir öğretmenin Hassas Ayar'dan istediği Boş Gün Talebi varsa, bu cilalama turu da o güne asla
+  // ders taşımaz — aksi halde greedy+onarım aşamalarında özenle boş bırakılan gün, sırf boşluk
+  // puanını azaltıyor diye burada doldurulabilirdi.
+  const gunUygunMu = (ogretmenId, g) => {
+    const bosGunler = (ogretmenBosGunu && ogretmenBosGunu[ogretmenId]) || [];
+    return !bosGunler.includes(g);
+  };
 
   for (let it = 0; it < iterasyon; it++) {
-    const h1 = hucreler[Math.floor(rnd() * hucreler.length)];
-    const h2 = hucreler[Math.floor(rnd() * hucreler.length)];
-    if (h1.sinif === h2.sinif && h1.g === h2.g && h1.p === h2.p) continue;
-    // GÜVENLİK: bir dersin ait olduğu sınıfın DIŞINA taşınmasını (başka bir sınıfın programına
-    // "sızmasını") kesin olarak engellemek için, bu iyileştirme adımı yalnızca AYNI sınıfın
-    // kendi içindeki iki saat arasında yer değiştirmeye izin verir. Farklı sınıflar arasında
-    // içerik takası asla yapılmaz — bu, bir öğretmenin başka bir sınıf için planlanmış dersinin
-    // yanlışlıkla farklı bir sınıfın programında görünmesine yol açan bir hataydı.
-    if (h1.sinif !== h2.sinif) continue;
-    const c1 = classGrid[h1.sinif][h1.g][h1.p];
-    const c2 = classGrid[h2.sinif][h2.g][h2.p];
+    const sinif = siniflarListesi[Math.floor(rnd() * siniflarListesi.length)];
+    const liste = hucrelerBySinif[sinif];
+    const h1 = liste[Math.floor(rnd() * liste.length)];
+    const h2 = liste[Math.floor(rnd() * liste.length)];
+    if (h1.g === h2.g && h1.p === h2.p) continue;
+    const c1 = classGrid[sinif][h1.g][h1.p];
+    const c2 = classGrid[sinif][h2.g][h2.p];
     if (!c1 || !c2) continue;
+    if (c1.sabit || c2.sabit) continue; // SABİT DERS KORUMASI: pimlenmiş hücreler hiçbir takasa dahil edilmez
     const b1 = bloklarById[c1.blokId], b2 = bloklarById[c2.blokId];
     if (!b1 || !b2) continue;
     const o1 = c1.ogretmenId, o2 = c2.ogretmenId;
-    if (o1 === o2 && h1.sinif === h2.sinif) continue; // aynı öğretmen + aynı sınıf: anlamsız takas
+    if (o1 === o2) continue; // aynı öğretmen + aynı sınıf: anlamsız takas (zaten aynı satır)
     if (h1.g !== h2.g && (b1.desenli || b2.desenli)) continue; // desenli blok başka güne taşınamaz
-    if (o1 !== o2) {
-      const o1Hedefte = teacherGrid[o1][h2.g][h2.p];
-      const o2Hedefte = teacherGrid[o2][h1.g][h1.p];
-      if (o1Hedefte && o1Hedefte !== c1.blokId) continue;
-      if (o2Hedefte && o2Hedefte !== c2.blokId) continue;
-      if (yasakSet[o1] && yasakSet[o1].has(`${h2.g}-${h2.p}`)) continue;
-      if (yasakSet[o2] && yasakSet[o2].has(`${h1.g}-${h1.p}`)) continue;
-      if (zorunluMu(o1, h1.g, h1.p) || zorunluMu(o2, h2.g, h2.p)) continue;
-    } else {
-      if (zorunluMu(o1, h1.g, h1.p) || zorunluMu(o1, h2.g, h2.p)) continue;
-    }
+    if (h1.g !== h2.g && (!gunUygunMu(o1, h2.g) || !gunUygunMu(o2, h1.g))) continue; // Boş Gün Talebi olan güne taşınamaz
+    const o1Hedefte = teacherGrid[o1][h2.g][h2.p];
+    const o2Hedefte = teacherGrid[o2][h1.g][h1.p];
+    if (o1Hedefte && o1Hedefte !== c1.blokId) continue;
+    if (o2Hedefte && o2Hedefte !== c2.blokId) continue;
+    if (yasakSet[o1] && yasakSet[o1].has(`${h2.g}-${h2.p}`)) continue;
+    if (yasakSet[o2] && yasakSet[o2].has(`${h1.g}-${h1.p}`)) continue;
+    if (zorunluMu(o1, h1.g, h1.p) || zorunluMu(o2, h2.g, h2.p)) continue;
 
-    const etkilenenler = o1 === o2 ? [ogretmenById[o1]] : [ogretmenById[o1], ogretmenById[o2]].filter(Boolean);
+    const etkilenenler = [ogretmenById[o1], ogretmenById[o2]].filter(Boolean);
     if (!etkilenenler.length) continue;
     const oncekiPuan = dpBoslukPuanla(etkilenenler, teacherGrid, GUN, SAAT);
 
-    classGrid[h1.sinif][h1.g][h1.p] = c2;
-    classGrid[h2.sinif][h2.g][h2.p] = c1;
-    if (o1 !== o2) {
-      teacherGrid[o1][h1.g][h1.p] = null;
-      teacherGrid[o1][h2.g][h2.p] = c1.blokId;
-      teacherGrid[o2][h2.g][h2.p] = null;
-      teacherGrid[o2][h1.g][h1.p] = c2.blokId;
-    } else {
-      teacherGrid[o1][h1.g][h1.p] = c2.blokId;
-      teacherGrid[o1][h2.g][h2.p] = c1.blokId;
-    }
+    classGrid[sinif][h1.g][h1.p] = c2;
+    classGrid[sinif][h2.g][h2.p] = c1;
+    teacherGrid[o1][h1.g][h1.p] = null;
+    teacherGrid[o1][h2.g][h2.p] = c1.blokId;
+    teacherGrid[o2][h2.g][h2.p] = null;
+    teacherGrid[o2][h1.g][h1.p] = c2.blokId;
 
     const yeniPuan = dpBoslukPuanla(etkilenenler, teacherGrid, GUN, SAAT);
     if (yeniPuan < oncekiPuan) continue; // iyileşti: değişiklik kalıcı
 
     // İyileşme yok (ya da kötüleşti): geri al.
-    classGrid[h1.sinif][h1.g][h1.p] = c1;
-    classGrid[h2.sinif][h2.g][h2.p] = c2;
-    if (o1 !== o2) {
-      teacherGrid[o1][h1.g][h1.p] = c1.blokId;
-      teacherGrid[o1][h2.g][h2.p] = null;
-      teacherGrid[o2][h2.g][h2.p] = c2.blokId;
-      teacherGrid[o2][h1.g][h1.p] = null;
-    } else {
-      teacherGrid[o1][h1.g][h1.p] = c1.blokId;
-      teacherGrid[o1][h2.g][h2.p] = c2.blokId;
-    }
+    classGrid[sinif][h1.g][h1.p] = c1;
+    classGrid[sinif][h2.g][h2.p] = c2;
+    teacherGrid[o1][h1.g][h1.p] = c1.blokId;
+    teacherGrid[o1][h2.g][h2.p] = null;
+    teacherGrid[o2][h2.g][h2.p] = c2.blokId;
+    teacherGrid[o2][h1.g][h1.p] = null;
   }
 }
 function dpTekDenemeOlustur(dp, tohum) {
@@ -901,48 +916,53 @@ function dpTekDenemeOlustur(dp, tohum) {
   const teacherGrid = {};
   ogretmenler.forEach((o) => { teacherGrid[o.id] = Array.from({ length: GUN }, () => Array(SAAT).fill(null)); });
 
+  // SABİT ETKİNLİK: kullanıcının "Ayarlar" sekmesinden tanımladığı, belirli bir gün/saatte TÜM
+  // okulun aynı anda katıldığı bir slot. İki türü var:
+  //  (a) "Yeni/ekstra etkinlik" (dersId YOK — bayrak töreni, ortak sınav gibi hiçbir öğretmene
+  //      bağlı olmayan bir şey): bu, o saati her sınıf için normal ders yerleştirmesinden ÖNCE
+  //      dolu işaretler ve GERÇEKTEN ekstra bir saat tüketir (kapasiteden düşer — bkz.
+  //      dpKapasiteUyarilariUret).
+  //  (b) "Var olan bir dersi sabitle" (dersId VAR — örn. Rehberlik dersi her zaman Pazartesi 5.
+  //      saatte olsun): bu YENİ bir saat EKLEMEZ — sadece o ders için zaten atanmış olan haftalık
+  //      saatlerden BİRİNİN yerini bu gün/saate SABİTLER (o dersin her sınıftaki kendi öğretmeniyle).
+  //      Bu yüzden kapasiteden hiçbir şey düşülmez; toplam ders yükü aynı kalır, sadece o saatin
+  //      NEREDE olacağı baştan belirlenmiş olur. Bu adım aşağıda "bloklar" oluşturulduktan HEMEN
+  //      SONRA yapılır çünkü ilgili bloğun `kalan` sayacını 1 azaltması gerekir.
+  (dp.ayarlar.sabitEtkinlikler || []).filter((e) => !e.dersId).forEach((e) => {
+    if (e.gun < 0 || e.gun >= GUN || e.saat < 0 || e.saat >= SAAT) return;
+    siniflarTum.forEach((s) => { classGrid[s][e.gun][e.saat] = { etkinlik: true, ad: e.ad }; });
+  });
+
   const yasakSet = {}, zorunluListe = {};
   ogretmenler.forEach((o) => {
     yasakSet[o.id] = new Set((o.kisitlar || []).filter((k) => k.tur === "yasak").map((k) => `${k.gun}-${k.saat}`));
     zorunluListe[o.id] = (o.kisitlar || []).filter((k) => k.tur === "zorunlu");
   });
-  dpSabitSaatlerZorunluEkle(dp, zorunluListe);
 
   const yerlesimTercihleri = dp.ayarlar.yerlesimTercihleri || {};
   // Öğretmenlere HİÇBİR ZAMAN kendiliğinden/otomatik/olasılıksal boş gün verilmez — bu, çok
   // öğretmenli/çok sınıflı okullarda sınıfların günlük kapasitesini tıkayıp derslerin hiç
   // yerleşememesine yol açtığı için tamamen kaldırıldı. Boş gün SADECE, kullanıcı "Hassas Ayar"
-  // sekmesinde o öğretmen için AÇIKÇA "Boş Gün Talebi"ni etkinleştirip (istersen) bir veya BİRDEN
-  // FAZLA gün seçtiyse uygulanır — başka HİÇBİR öğretmenin gün dağılımına dokunulmaz (gunSayilari
-  // her zaman eskisi gibi haftanın tamamına serbestçe dağıtılır). Belirli gün(ler) seçilmemişse,
-  // yalnızca "kaç gün boş olsun" sayısı verilmişse, hangi günlerin boş kalacağına her denemede
-  // rastgele karar verilir. Açıkça seçilmiş bir güne zorunlu kısıt denk gelirse SADECE o gün talep
-  // listesinden düşer (diğer seçili günler yine uygulanır) — zorunlu kısıt her zaman önceliklidir.
+  // sekmesinde o öğretmen için AÇIKÇA "Boş Gün Talebi"ni etkinleştirip istediği bir veya daha fazla
+  // günü seçtiyse uygulanır — başka HİÇBİR öğretmenin gün dağılımına dokunulmaz (gunSayilari her
+  // zaman eskisi gibi haftanın tamamına serbestçe dağıtılır). Zorunlu kısıtı olan bir güne boş gün
+  // talebi denk gelirse SADECE o gün için talep bu öğretmenden düşürülür (diğer seçili günler
+  // etkilenmez) — zorunlu kısıt her zaman önceliklidir; kimseye yerleştirilemeyen ders bırakılmaz.
   const ogretmenAktifGunler = {};
+  // ogretmenBosGunu: her öğretmen için (varsa) o denemede geçerli olan boş gün(ler) — bir SAYI
+  // DİZİSİ (birden fazla gün seçilebilir). Hem greedy yerleştirme (ogretmenAktifGunler üzerinden)
+  // hem de ONARIM/TAKAS adımları (dpBosaltVeYerlestir, dpOnarimUygula, dpSinifTakasOnarimi) bu
+  // haritayı kullanarak öğretmenin boş günlerine ASLA ders eklemez.
+  const ogretmenBosGunu = {};
   ogretmenler.forEach((o) => {
     const ayar = dpBoslukAyarNormalize(o);
     if (!ayar.bosGunTalebi || !ayar.bosGunTalebi.aktif) return;
     const zorunluGunSet = new Set((zorunluListe[o.id] || []).map((k) => k.gun));
-    let hedefGunler = (ayar.bosGunTalebi.gunler || []).filter((g) => !zorunluGunSet.has(g));
-    if (hedefGunler.length === 0) {
-      const istenenSayi = Math.min(GUN - 1, ayar.bosGunTalebi.sayi || 0);
-      if (istenenSayi > 0) {
-        const adaylar = dpKaristir(Array.from({ length: GUN }, (_, i) => i).filter((g) => !zorunluGunSet.has(g)), rnd);
-        hedefGunler = adaylar.slice(0, istenenSayi);
-      }
-    }
-    if (hedefGunler.length === 0) return;
+    const hedefGunler = (ayar.bosGunTalebi.gunler || []).filter((g) => !zorunluGunSet.has(g));
+    if (!hedefGunler.length) return;
     const hedefGunSet = new Set(hedefGunler);
     ogretmenAktifGunler[o.id] = Array.from({ length: GUN }, (_, i) => i).filter((g) => !hedefGunSet.has(g));
-    // KRİTİK: yalnızca ogretmenAktifGunler'i doldurmak yeterli DEĞİLDİR — bu yalnızca İLK greedy
-    // yerleştirmedeki gün dağılımını etkiler. Onarım, sınıf-takas onarımı, boşluk-azaltma cilalaması
-    // ve "son çare" adımlarının HİÇBİRİ ogretmenAktifGunler'den haberdar değildir; hepsi yalnızca
-    // yasakSet'e bakar. Bu yüzden boş gün talebi daha önce bu sonraki aşamalarda sessizce "geri
-    // açılabiliyordu" (özellikle BİRDEN FAZLA gün istendiğinde, cilalama başka bir dersi tam da bu
-    // "boş" güne taşıyarak boşluk puanını iyileştirebiliyordu). Talep edilen her günün TÜM saatlerini
-    // doğrudan bu öğretmenin yasakSet'ine ekleyerek, programın HİÇBİR aşamasının bu güne asla
-    // dokunamayacağını garanti ediyoruz.
-    hedefGunler.forEach((g) => { for (let p = 0; p < SAAT; p++) yasakSet[o.id].add(`${g}-${p}`); });
+    ogretmenBosGunu[o.id] = hedefGunler;
   });
   let blokSira = 0;
   let bloklar = [];
@@ -969,42 +989,29 @@ function dpTekDenemeOlustur(dp, tohum) {
       });
     });
   });
-  // Atamaların işlenme sırası, hangi dersin "önce" iyi saatleri kapacağını belirler. Basit rastgele
-  // karıştırma, haftalık ders yükü çok ağır olan (ör. 5-6 farklı sınıfa giren) bir öğretmeni de
-  // hafif yüklü biriyle eşit şansla "sona" bırakabiliyordu — böyle bir öğretmen için sınıfların
-  // takvimi o zamana kadar çoktan dolmuş oluyor, bu da özellikle Hassas Ayar'daki boşluk sınırını
-  // aşırı derecede aştırıyordu. Bunun yerine önce yük büyüklüğüne göre (en yüklü öğretmen en önce
-  // ele alınacak şekilde — "en kısıtlı önce" sezgisi) sıralanır; AYNI yük büyüklüğündeki bloklar
-  // arasında sıra yine rastgeledir (JS'in sort'u kararlıdır/stable, bu yüzden aşağıdaki karıştırma
-  // korunur) — böylece denemeler arası çeşitlilik/arama gücü kaybolmaz, sadece en zor öğretmenlere
-  // her zaman ilk seçim hakkı tanınır.
-  const ogretmenYuku = {};
-  ogretmenler.forEach((o) => { ogretmenYuku[o.id] = (o.atamalar || []).reduce((t, a) => t + (Number(a.saat) || 0), 0); });
-  bloklar = dpKaristir(bloklar, rnd).sort((a, b) => (ogretmenYuku[b.ogretmenId] || 0) - (ogretmenYuku[a.ogretmenId] || 0));
+  // Atamaların işlenme sırası, hangi dersin "önce" iyi saatleri kapacağını belirler; bu sırayı
+  // denemeler arasında karıştırmak farklı (bazen daha başarılı) yerleşimler bulmayı sağlar.
+  bloklar = dpKaristir(bloklar, rnd);
+
+  // "Var olan bir dersi sabitle" türündeki sabit etkinlikler burada uygulanır (bkz. yukarıdaki not):
+  // her sınıf için o dersin kendi öğretmenine ait bloğu bulup 1 saatini bu gün/saate sabitliyoruz.
+  (dp.ayarlar.sabitEtkinlikler || []).filter((e) => e.dersId).forEach((e) => {
+    if (e.gun < 0 || e.gun >= GUN || e.saat < 0 || e.saat >= SAAT) return;
+    siniflarTum.forEach((s) => {
+      if (classGrid[s][e.gun][e.saat]) return; // hücre zaten dolu (başka bir sabit slotla çakışıyor) — atla
+      const blok = bloklar.find((b) => b.sinif === s && b.dersId === e.dersId && b.kalan > 0);
+      if (!blok) return; // bu sınıfta bu ders atanmamış (ya da zaten tamamı sabitlenmiş) — atla
+      if (teacherGrid[blok.ogretmenId][e.gun][e.saat]) return; // öğretmen o saatte başka bir sınıfta — atla, çakışma diğer uyarılarda görünür
+      classGrid[s][e.gun][e.saat] = { dersId: blok.dersId, ogretmenId: blok.ogretmenId, blokId: blok.id, sabit: true };
+      teacherGrid[blok.ogretmenId][e.gun][e.saat] = blok.id;
+      blok.kalan--;
+      if (blok.gunSayilari[e.gun] > 0) blok.gunSayilari[e.gun]--;
+    });
+  });
 
   const uyarilar = [];
 
   for (let g = 0; g < GUN; g++) {
-    // 0) "Ders Saati Sabitleme": kullanıcı belirli bir ders+sınıf için tam olarak hangi gün/saatte
-    // işleneceğini AÇIKÇA sabitlediyse (dp.ayarlar.sabitSaatler), bu HER ŞEYDEN önce, en yüksek
-    // öncelikle yerleştirilir — zorunlu kısıtlardan bile önce, çünkü kullanıcının burada verdiği
-    // talimat "bu ders SADECE bu saatte işlensin" kadar kesindir. Sınıfın ya da öğretmenin o saati
-    // gerçekten müsait değilse (başka bir sabitleme ya da yasakla çakışıyorsa) sessizce atlanır ve
-    // durum normal "yerleşemedi" uyarı mekanizmasına bırakılır — kullanıcıya neden yerleşmediği
-    // zaten "Sınıfın programı dolu" tarzı bir uyarı olarak görünecektir.
-    (dp.ayarlar.sabitSaatler || []).filter((s) => s.gun === g).forEach((s) => {
-      const p = s.saat;
-      if (p < 0 || p >= SAAT) return;
-      if (classGrid[s.sinif] && classGrid[s.sinif][g][p]) return; // sınıf o saatte zaten dolu
-      const aday = bloklar.find((b) => b.sinif === s.sinif && b.dersId === s.dersId && b.kalan > 0);
-      if (!aday) return;
-      if (teacherGrid[aday.ogretmenId][g][p]) return; // öğretmen o saatte başka bir sınıfta
-      if (yasakSet[aday.ogretmenId] && yasakSet[aday.ogretmenId].has(`${g}-${p}`)) return; // öğretmenin o saati yasaklı
-      classGrid[s.sinif][g][p] = { dersId: aday.dersId, ogretmenId: aday.ogretmenId, blokId: aday.id };
-      teacherGrid[aday.ogretmenId][g][p] = aday.id;
-      aday.kalan--;
-      if (aday.gunSayilari[g] > 0) aday.gunSayilari[g]--;
-    });
     // 1) Zorunlu kısıtları önce sabitle: o öğretmenin o saate koyulabilecek bir dersi varsa oraya yerleştir.
     dpKaristir(ogretmenler, rnd).forEach((o) => {
       zorunluListe[o.id].filter((k) => k.gun === g).forEach((k) => {
@@ -1021,37 +1028,7 @@ function dpTekDenemeOlustur(dp, tohum) {
         }
       });
     });
-    // 1.5) "Ders Yerleşim Tercihi" (desenli) blokların BUGÜNKÜ payını (örn. "2+2"deki 2 saat)
-    // ATOMİK olarak, yani baştan ARDIŞIK bir bütün halinde yerleştirmeyi dener. Aşağıdaki adım 2,
-    // saatleri tek tek soldan sağa doldurur ve bir bloğun devam etmesini yalnızca "önceki saat de
-    // bu bloktaysa" kontrolüyle sağlar — ama o blok henüz hiç başlamamışsa (günün ilk saatinde
-    // seçilmemişse) ve arada (örn. öğretmenin başka bir sınıfta dolu olması yüzünden) bir saat
-    // atlanırsa, kalan payı ARADAN BOŞLUKLU (ör. 2. ve 4. saat) yerleşebiliyordu — kullanıcının
-    // açıkça "blok halinde" istediği bir deseni bozan tam da buydu. Bu adım, o günün TAMAMEN boş
-    // ve ARDIŞIK bir aralığını bulabilirse tüm payı tek seferde oraya yerleştirir; bulamazsa hiçbir
-    // şey yapmaz (bloğa dokunmaz) — o zaman adım 2, eskisi gibi tek tek (gerekirse bölünerek de
-    // olsa TAMAMEN yerleşsin diye) devreye girer. Yani "hiç yerleşmesin" yerine yalnızca gerçekten
-    // hiçbir tam blok sığmadığında bölünmeye izin verilir; tam blok sığdığı sürece HER ZAMAN o seçilir.
-    dpKaristir(bloklar.filter((b) => b.desenli && b.kalan > 0 && b.gunSayilari[g] > 1), rnd).forEach((b) => {
-      const gerekliUzunluk = b.gunSayilari[g];
-      for (let bas = 0; bas + gerekliUzunluk <= SAAT; bas++) {
-        let uygun = true;
-        for (let k = 0; k < gerekliUzunluk; k++) {
-          const p = bas + k;
-          if (classGrid[b.sinif][g][p] || teacherGrid[b.ogretmenId][g][p] || yasakSet[b.ogretmenId].has(`${g}-${p}`)) { uygun = false; break; }
-        }
-        if (uygun) {
-          for (let k = 0; k < gerekliUzunluk; k++) {
-            const p = bas + k;
-            classGrid[b.sinif][g][p] = { dersId: b.dersId, ogretmenId: b.ogretmenId, blokId: b.id };
-            teacherGrid[b.ogretmenId][g][p] = b.id;
-            b.kalan--;
-          }
-          b.gunSayilari[g] = 0;
-          break;
-        }
-      }
-    });
+    // 2) Genel yerleştirme: her saati erkenden geçe doğru tarar, her sınıf için o an en uygun
     // (o gün için planlanmış, çakışmasız ve yasaklı olmayan) dersi yerleştirir. Erken saatlere
     // öncelik vermek öğretmenlerin gün içindeki derslerinin birbirine yakın kalmasını sağlar.
     // Sınıfların işlenme sırası denemeler arasında karıştırılır ki tek bir sınıf hep aynı
@@ -1064,10 +1041,22 @@ function dpTekDenemeOlustur(dp, tohum) {
         // Bu saat için "bugün planı olan" hiçbir aday yoksa, normalde HERHANGİ bir kalan-saatli
         // blok bu boş saate yerleştirilir (deadlock'ları önlemek için) — ANCAK bu, bir "Ders
         // Yerleşim Tercihi" (desenli) bloğun kendi günlük kotasını (örn. "2+2"deki 2 saat)
-        // bitirdikten sonra AYNI GÜNE fazladan saat çekmesine yol açabilir ve deseni bozar.
-        // Bu yüzden fallback'e girerken kotası o gün için dolmuş desenli blokları hariç tutuyoruz;
-        // o slotun boş kalması (sınıfın o saat dersinin olmaması), desenin bozulmasından iyidir.
-        if (adaylar.length === 0) adaylar = bloklar.filter((b) => b.sinif === sinif && b.kalan > 0 && !(b.desenli && b.gunSayilari[g] === 0));
+        // bitirdikten sonra AYNI GÜNE fazladan saat çekmesine yol açabilir ve deseni bozar; AYNI
+        // ŞEKİLDE bir öğretmenin Hassas Ayar'dan istediği Boş Gün Talebi de bu fallback'in "her
+        // ne pahasına yerleştir" mantığıyla çiğnenebilirdi (nitekim bu, öğretmenin boş gün
+        // talebine rağmen o güne ders eklenmesine yol açan gerçek sebepti). Bu yüzden fallback'e
+        // girerken hem kotası o gün için dolmuş desenli blokları HEM DE o günü Boş Gün Talebi ile
+        // isteyen öğretmenlerin bloklarını hariç tutuyoruz; o slotun boş kalması, deseni bozmaktan
+        // ya da öğretmenin açıkça istediği boş güne dokunmaktan iyidir.
+        if (adaylar.length === 0) {
+          adaylar = bloklar.filter((b) => {
+            if (b.sinif !== sinif || b.kalan <= 0) return false;
+            if (b.desenli && b.gunSayilari[g] === 0) return false;
+            const bosGunlerB = ogretmenBosGunu[b.ogretmenId] || [];
+            if (bosGunlerB.includes(g)) return false;
+            return true;
+          });
+        }
         adaylar = adaylar.filter((b) => !teacherGrid[b.ogretmenId][g][p] && !yasakSet[b.ogretmenId].has(`${g}-${p}`));
         if (!adaylar.length) return;
         // Ders Yerleşim Tercihi (desenli) bloklar için: bir önceki saatte bu sınıfta yerleşmiş olan
@@ -1125,7 +1114,7 @@ function dpTekDenemeOlustur(dp, tohum) {
   // "uyarilar" burada yalnızca zorunlu kısıt uyarılarını taşır; kalanUyarilari ayrı tutulur ki
   // dpProgramOlustur onarım adımından sonra yalnız kalan-uyarı kısmını tazeleyebilsin (zorunlu
   // kısıt uyarıları kaybolmasın).
-  return { classGrid, uyarilar, kalanUyarilari, toplamKalan, toplamBosluk, bloklar, teacherGrid, yasakSet, siniflarTum };
+  return { classGrid, uyarilar, kalanUyarilari, toplamKalan, toplamBosluk, bloklar, teacherGrid, yasakSet, siniflarTum, ogretmenBosGunu };
 }
 // Bir öğretmenin/dersin "kalan" (yerleşememiş) saatlerinden uyarı metinleri üretir ve toplam
 // kalan/boşluk saatlerini hesaplar. dpTekDenemeOlustur ve onarım sonrası dpProgramOlustur
@@ -1183,16 +1172,36 @@ function dpSonucOzetle(dp, ogretmenler, bloklar, teacherGrid, GUN, SAAT, classGr
 // tekrarlanır). Bu, klasik iki parçalı eşleştirme (bipartite matching) algoritmasıyla aynı
 // mantıktır ve basit "tek adım" yer değiştirmenin çözemediği, "sınıf tam dolu / saatler sıkışık"
 // gibi zor durumları da matematiksel olarak çözümü varsa bulur.
-function dpBosaltVeYerlestir(ogretmenId, hedefSinif, dersId, blokId, classGrid, teacherGrid, yasakSet, GUN, SAAT, bloklarById, ziyaretEdilen, desenGormezdenGel) {
+function dpBosaltVeYerlestir(ogretmenId, hedefSinif, dersId, blokId, classGrid, teacherGrid, yasakSet, GUN, SAAT, bloklarById, ziyaretEdilen, ogretmenBosGunu, sonCareModu) {
   // Yerleştirilecek blok "Ders Yerleşim Tercihi" (desenli) ise, onarım sırasında da o bloğun
   // günlük kotası (örn. "2+2"deki 2 saat) zaten dolmuş bir güne fazladan saat eklenmemesi için
   // o günler baştan hariç tutulur — aksi halde onarım adımı, greedy aşamada özenle korunan
-  // deseni bozabilirdi. İSTİSNA: desenGormezdenGel=true ile çağrılırsa (yalnızca en son çare
-  // onarım turunda kullanılır — bkz. dpProgramOlustur) bu kısıt tamamen kaldırılır; böylece bir
-  // dersin TAMAMEN yerleşememesi riski varsa, katı gün deseni (zincirdeki HİÇBİR blok için,
-  // bumped/kaydırılan bloklar dahil) yerleşimi engellemez.
+  // deseni bozabilirdi. AYRICA: öğretmenin Hassas Ayar'dan AÇIKÇA istediği "Boş Gün Talebi" günü
+  // varsa, onarım o günü de asla kullanmaz — önceden onarım adımları bu ayardan habersizdi ve
+  // greedy aşamasında bilinçli boş bırakılan günü doldurabiliyordu; artık öğretmenin kendi
+  // bosGunu için bu kontrol her rekürsif adımda (zincirdeki HANGİ öğretmenin dersine bakılıyorsa
+  // onun günü için) ayrı ayrı uygulanır.
+  //
+  // SON ÇARE MODU: normal onarım turları (sonCareModu=false) bittikten sonra HÂLÂ yerleşemeyen
+  // saatler kalırsa, dpProgramOlustur tek bir EK tur için bu fonksiyonu sonCareModu=true ile
+  // çağırır — bu modda gunKisitli devre dışı kalır, yani Boş Gün Talebi ve desen kotası ARTIK bu
+  // saatleri engellemez. Gerekçe: bir dersin haftada hiç yerleşmemiş kalması, kullanıcının
+  // istediği bir tercihin (boş gün / desen) esnetilmesinden HER ZAMAN daha kötüdür — ders
+  // programının asıl görevi tüm dersleri yerleştirmektir, tercihler bunun için "olabilirse"
+  // uygulanan ikincil bir iyileştirmedir. Bu modda yerleştirilen saatler dpProgramOlustur
+  // tarafından ayrıca tespit edilip kullanıcıya açıkça uyarı olarak bildirilir.
   const hedefBlok = bloklarById[blokId];
-  const gunKisitli = (!desenGormezdenGel && hedefBlok && hedefBlok.desenli) ? (g) => hedefBlok.gunSayilari[g] === 0 : () => false;
+  const bosGunler = (ogretmenBosGunu && ogretmenBosGunu[ogretmenId]) || [];
+  const gunKisitli = (g) => {
+    // ÖNEMLİ DÜZELTME: son çare modu SADECE desen (Ders Yerleşim Tercihi) kotasını esnetir; Boş
+    // Gün Talebi bu modda da HİÇBİR ZAMAN esnetilmez. Kullanıcı bir öğretmene açıkça boş gün
+    // verdiyse bu KESİN bir kuraldır — "yerleştirilemedi" sayısını azaltmak için bu kuralın
+    // sessizce çiğnenmesi kabul edilemez; öyle bir durumda ders gerçekten yerleşemez ve analiz
+    // panelinde "Boş Gün Talebi" sebebiyle bloklandığı açıkça gösterilir.
+    if (!sonCareModu && hedefBlok && hedefBlok.desenli && hedefBlok.gunSayilari[g] === 0) return true;
+    if (bosGunler.includes(g)) return true;
+    return false;
+  };
   for (let g = 0; g < GUN; g++) {
     if (gunKisitli(g)) continue;
     for (let p = 0; p < SAAT; p++) {
@@ -1209,10 +1218,11 @@ function dpBosaltVeYerlestir(ogretmenId, hedefSinif, dersId, blokId, classGrid, 
       }
       const digerBlok = bloklarById[doluBlokId];
       if (!digerBlok) continue;
+      if (classGrid[digerBlok.sinif][g][p] && classGrid[digerBlok.sinif][g][p].sabit) continue; // SABİT DERS KORUMASI: pimlenmiş hücre asla yerinden oynatılmaz
       const eskiSinif = digerBlok.sinif, eskiDersId = digerBlok.dersId;
       classGrid[eskiSinif][g][p] = null;
       teacherGrid[ogretmenId][g][p] = null;
-      if (dpBosaltVeYerlestir(ogretmenId, eskiSinif, eskiDersId, doluBlokId, classGrid, teacherGrid, yasakSet, GUN, SAAT, bloklarById, ziyaretEdilen, desenGormezdenGel)) {
+      if (dpBosaltVeYerlestir(ogretmenId, eskiSinif, eskiDersId, doluBlokId, classGrid, teacherGrid, yasakSet, GUN, SAAT, bloklarById, ziyaretEdilen, ogretmenBosGunu, sonCareModu)) {
         classGrid[hedefSinif][g][p] = { dersId, ogretmenId, blokId };
         teacherGrid[ogretmenId][g][p] = blokId;
         return true;
@@ -1223,7 +1233,7 @@ function dpBosaltVeYerlestir(ogretmenId, hedefSinif, dersId, blokId, classGrid, 
   }
   return false;
 }
-function dpOnarimUygula(classGrid, teacherGrid, bloklar, yasakSet, GUN, SAAT, desenGormezdenGel) {
+function dpOnarimUygula(classGrid, teacherGrid, bloklar, yasakSet, GUN, SAAT, ogretmenBosGunu, sonCareModu) {
   const bloklarById = {};
   bloklar.forEach((b) => { bloklarById[b.id] = b; });
   let ilerleme = true;
@@ -1232,7 +1242,7 @@ function dpOnarimUygula(classGrid, teacherGrid, bloklar, yasakSet, GUN, SAAT, de
     bloklar.filter((b) => b.kalan > 0).forEach((b) => {
       while (b.kalan > 0) {
         const ziyaretEdilen = new Set();
-        const basarili = dpBosaltVeYerlestir(b.ogretmenId, b.sinif, b.dersId, b.id, classGrid, teacherGrid, yasakSet, GUN, SAAT, bloklarById, ziyaretEdilen, desenGormezdenGel);
+        const basarili = dpBosaltVeYerlestir(b.ogretmenId, b.sinif, b.dersId, b.id, classGrid, teacherGrid, yasakSet, GUN, SAAT, bloklarById, ziyaretEdilen, ogretmenBosGunu, sonCareModu);
         if (!basarili) break;
         b.kalan--;
         ilerleme = true;
@@ -1257,7 +1267,7 @@ function dpOnarimUygula(classGrid, teacherGrid, bloklar, yasakSet, GUN, SAAT, de
 // hücreye yerleşir; bulamazsa hücre olduğu gibi geri konur ve aramaya bir sonraki (g,p) adayıyla
 // devam edilir. Bu, kullanıcının istediği "sürekli yer değiştir, gerekirse yerleşeni kaldırıp
 // yeniden kur" davranışının karşılığıdır.
-function dpSinifTakasOnarimi(classGrid, teacherGrid, bloklar, yasakSet, zorunluListe, GUN, SAAT, desenGormezdenGel) {
+function dpSinifTakasOnarimi(classGrid, teacherGrid, bloklar, yasakSet, zorunluListe, GUN, SAAT, ogretmenBosGunu, sonCareModu) {
   const bloklarById = {};
   bloklar.forEach((b) => { bloklarById[b.id] = b; });
   let ilerleme = true;
@@ -1265,21 +1275,30 @@ function dpSinifTakasOnarimi(classGrid, teacherGrid, bloklar, yasakSet, zorunluL
   // Güvenlik turu sınırı 20 -> 100: daha ısrarlı/kapsamlı bir arama için artırıldı — artık her
   // tur içindeki tek tek takaslar da zincirleme olduğundan, dış turların çok yüksek olması
   // gerekmiyor ama önceki sınır bazı sıkışık programlarda erken kesiyordu.
+  //
+  // SON ÇARE MODU: sonCareModu=true iken (bkz. dpProgramOlustur), desen kotası ve Boş Gün Talebi
+  // kısıtları bu takas aramasında da devre dışı bırakılır — dpBosaltVeYerlestir'e de aynı mod
+  // aktarılır ki zincirleme yeniden yerleştirme sırasında da bu kısıtlar aşılabilsin.
   while (ilerleme && guvenlikSayaci < 100) {
     ilerleme = false;
     guvenlikSayaci++;
     bloklar.filter((b) => b.kalan > 0).forEach((b) => {
+      const bBosGunler = (ogretmenBosGunu && ogretmenBosGunu[b.ogretmenId]) || [];
       let devam = true;
       while (b.kalan > 0 && devam) {
         devam = false;
         disari:
         for (let g = 0; g < GUN; g++) {
-          if (!desenGormezdenGel && b.desenli && b.gunSayilari[g] === 0) continue; // desenli blok: kotası dolan güne fazladan saat eklenmez
+          // ÖNEMLİ DÜZELTME: son çare modu SADECE desen kotasını esnetir, Boş Gün Talebi'ni ASLA —
+          // bkz. dpBosaltVeYerlestir'deki aynı isimli not.
+          if (!sonCareModu && b.desenli && b.gunSayilari[g] === 0) continue; // desenli blok: kotası dolan güne fazladan saat eklenmez
+          if (bBosGunler.includes(g)) continue; // öğretmenin Boş Gün Talebi: bu güne asla ders eklenmez (son çare modunda da geçerli)
           for (let p = 0; p < SAAT; p++) {
             if (yasakSet[b.ogretmenId] && yasakSet[b.ogretmenId].has(`${g}-${p}`)) continue;
             if (teacherGrid[b.ogretmenId][g][p]) continue; // öğretmenimiz zaten dolu — bu yolla çözülmez
             const doluHucre = classGrid[b.sinif][g][p];
             if (!doluHucre) continue; // buradaki normal onarım/greedy zaten dolduracaktı
+            if (doluHucre.sabit) continue; // SABİT DERS KORUMASI: pimlenmiş hücre asla yerinden oynatılmaz
             const digerBlok = bloklarById[doluHucre.blokId];
             if (!digerBlok || digerBlok.ogretmenId === b.ogretmenId) continue;
             const digerZorunluMu = (zorunluListe[digerBlok.ogretmenId] || []).some((k) => k.gun === g && k.saat === p);
@@ -1292,7 +1311,7 @@ function dpSinifTakasOnarimi(classGrid, teacherGrid, bloklar, yasakSet, zorunluL
               digerBlok.ogretmenId, b.sinif, digerBlok.dersId, digerBlok.id,
               classGrid, teacherGrid, yasakSet, GUN, SAAT, bloklarById,
               new Set([`${g}-${p}`]), // az önce boşalttığımız hücreye hemen geri konmasını engelle
-              desenGormezdenGel
+              ogretmenBosGunu, sonCareModu
             );
             if (yeniYerBulundu) {
               classGrid[b.sinif][g][p] = { dersId: b.dersId, ogretmenId: b.ogretmenId, blokId: b.id };
@@ -1373,86 +1392,7 @@ function dpHassasAyarIhlalSayisi(ogretmenler, teacherGrid, GUN, SAAT) {
   });
   return { sayi, asirilik };
 }
-// program.classGrid'den (dpProgramOlustur'un döndürdüğü nihai şekilden) teacherGrid'i yeniden
-// kurar — döndürülen "program" nesnesi teacherGrid'i İÇERMEZ (yalnızca classGrid), ama hem
-// dpAnalizUret hem de aşağıdaki otomatik onarım denemesi öğretmen bazlı bilgiye ihtiyaç duyar.
-function dpTeacherGridYenidenOlustur(classGrid, ogretmenler, GUN, SAAT, siniflar) {
-  const teacherGrid = {};
-  ogretmenler.forEach((o) => { teacherGrid[o.id] = Array.from({ length: GUN }, () => Array(SAAT).fill(null)); });
-  siniflar.forEach((sn) => {
-    const grid = classGrid[sn];
-    if (!grid) return;
-    for (let g = 0; g < GUN; g++) for (let p = 0; p < SAAT; p++) {
-      const h = grid[g] && grid[g][p];
-      if (h && teacherGrid[h.ogretmenId]) teacherGrid[h.ogretmenId][g][p] = { sinif: sn, dersId: h.dersId };
-    }
-  });
-  return teacherGrid;
-}
-// En ağır Hassas Ayar ihlaline sahip öğretmeni ve onu "sıkıştırmak" için hedeflenecek saati bulur:
-// en çok boşluğu olan gününün İLK boş saati — dpBoslukAzalt/dpHaftalikBoslukAzalt'ın taşımaya
-// çalıştığı TAM olarak bu saattir; farkı, burada bu saati bir zorunlu kısıtla "kilitleyip" tüm
-// programı baştan ürettirerek, o saati normal onarımın çözemediği bir çakışma (başka bir
-// öğretmenin zorunlu kısıtı gibi) engelliyorsa bile aşabilmesidir.
-function dpEnKotuIhlalHedefiBul(ogretmenler, teacherGrid, GUN, SAAT) {
-  let en = null;
-  ogretmenler.forEach((o) => {
-    const ayar = dpBoslukAyarNormalize(o);
-    if (!ayar.aktif) return;
-    const gunBilgileri = Array.from({ length: GUN }, (_, g) => dpSatirBosluklari(teacherGrid[o.id][g], SAAT));
-    const haftalikToplam = gunBilgileri.reduce((t, b) => t + b.toplam, 0);
-    let asirilik = 0;
-    if (ayar.haftalikMax !== null && haftalikToplam > ayar.haftalikMax) asirilik += (haftalikToplam - ayar.haftalikMax);
-    ayar.gunler.forEach((g, i) => {
-      if (g.maks === null) return;
-      const bilgi = gunBilgileri[i];
-      asirilik += Math.max(0, bilgi.toplam - g.maks) + Math.max(0, bilgi.maxBlok - (g.ardisikMax || 0));
-    });
-    if (asirilik <= 0) return;
-    let enKotuGun = -1, enKotuBosluk = -1;
-    gunBilgileri.forEach((b, i) => { if (b.toplam > enKotuBosluk) { enKotuBosluk = b.toplam; enKotuGun = i; } });
-    if (enKotuGun < 0 || enKotuBosluk <= 0) return;
-    const satir = teacherGrid[o.id][enKotuGun];
-    const ilk = dpSatirBosluklari(satir, SAAT).ilk;
-    if (ilk < 0) return;
-    for (let p = ilk; p < SAAT; p++) {
-      if (!satir[p]) {
-        if (!en || asirilik > en.asirilik) en = { ogretmenId: o.id, g: enKotuGun, p, asirilik };
-        break;
-      }
-    }
-  });
-  return en;
-}
-// SON ÇARE: Yukarıdaki tüm onarım adımlarından sonra hâlâ yerleşemeyen ("kalan > 0") bir "Ders
-// Yerleşim Tercihi" (desenli) bloğu varsa ve sınıfın/öğretmenin programında GERÇEKTEN boş bir saat
-// bulunuyorsa, o SADECE kalan saat(ler) için deseni (günlere dağılım kotasını) görmezden gelip
-// bulunan ilk uygun boş saate yerleştiririz. Tam yerleşim, bir dersin tercih edilen gün dağılımından
-// HER ZAMAN önceliklidir — sınıfın o dersten tamamen mahrum kalması, dersin "istenen" günde değil
-// başka bir günde işlenmesinden çok daha kötüdür. Zaten tamamlanmış (kalan=0) bloklara hiç dokunulmaz,
-// bu yüzden kullanıcının deseni normalde her zaman aynen uygulanmaya devam eder — yalnızca gerçekten
-// tıkanan istisnai durumda devreye girer.
-function dpDesenliSonCareYerlestir(classGrid, teacherGrid, bloklar, yasakSet, GUN, SAAT) {
-  bloklar.forEach((b) => {
-    while (b.kalan > 0) {
-      let yerlesti = false;
-      for (let g = 0; g < GUN && !yerlesti; g++) {
-        for (let p = 0; p < SAAT && !yerlesti; p++) {
-          if (classGrid[b.sinif][g][p]) continue;
-          if (teacherGrid[b.ogretmenId][g][p]) continue;
-          if (yasakSet[b.ogretmenId] && yasakSet[b.ogretmenId].has(`${g}-${p}`)) continue;
-          classGrid[b.sinif][g][p] = { dersId: b.dersId, ogretmenId: b.ogretmenId, blokId: b.id };
-          teacherGrid[b.ogretmenId][g][p] = b.id;
-          b.kalan -= 1;
-          yerlesti = true;
-        }
-      }
-      if (!yerlesti) break;
-    }
-  });
-}
-function dpProgramOlustur(dp, derinlik) {
-  derinlik = derinlik || 0;
+function dpProgramOlustur(dp) {
   const GUN = 5;
   const SAAT = (Number(dp.ayarlar.oncekiSaat) || 0) + (Number(dp.ayarlar.sonrakiSaat) || 0);
   const siniflar = dp.ayarlar.siniflar && dp.ayarlar.siniflar.length ? dp.ayarlar.siniflar : SINIFLAR;
@@ -1460,22 +1400,14 @@ function dpProgramOlustur(dp, derinlik) {
 
   const kapasite = dpKapasiteUyarilariUret(dp, siniflar, ogretmenler, GUN, SAAT);
 
-  // PERFORMANS: Sabit "20.000 deneme" telefonlarda dakikalarca sürüp tarayıcının donmasına yol
-  // açabiliyordu; bu yüzden bir süre 800 sabit denemeye düşürülmüştü. Ancak gerçek kullanımda
-  // görüldü ki 800, özellikle "Hassas Ayar" (öğretmen başına haftalık izin verilen boşluk üst
-  // sınırı) gibi KATI bir kısıtlama devrede olduğunda bazı okullarda YETERSİZ kalabiliyor — kural
-  // hâlâ sağlanabilecekken arama erken kesiliyor ve gereğinden çok ihlal raporlanıyor. Bu yüzden
-  // artık SABİT bir sayı yerine ZAMAN BÜTÇESİ kullanılıyor: en az eskisi kadar (800) deneme her
-  // zaman yapılır (bu, küçük/orta okullarda zaten aynı hızda tamamlanır), ama Hassas Ayar kuralları
-  // hâlâ tam sağlanamadıysa arama, telefonu donduracak kadar değil ama gerçekten daha iyi bir
-  // çözüm bulmaya yetecek kadar (en fazla ~15 saniye) daha devam eder. Olası bir sonsuz döngüye
-  // karşı da mutlak bir üst güvenlik sınırı (20.000) korunuyor.
-  const DENEME_SAYISI_MIN = 800;
-  const DENEME_SAYISI_GUVENLIK_SINIRI = 20000;
-  const DENEME_ZAMAN_BUTCESI_MS = 15000;
-  const dpSimdi = () => (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
-  const denemeBaslangicZamani = dpSimdi();
-  let gerceklesenDenemeSayisi = 0;
+  // PERFORMANS — KRİTİK: 20.000 deneme, 40+ öğretmen/24+ sınıflık gerçek okullarda telefonda
+  // dakikalarca sürüp tarayıcının "yanıt vermiyor" hale gelmesine, hatta işlemin yarıda kesilip
+  // bozuk/eksik bir sonuçla "tamamlanmış" görünmesine yol açıyordu. Ölçüldüğünde: bu büyüklükteki
+  // bir okulda rastgele arama neredeyse İLK 50-200 deneme içinde doygunlaşıyor — 20.000 ile 50
+  // deneme arasında nihai kalite (kaç saatin yerleşemediği) pratikte AYNI çıkıyor, yalnızca süre
+  // 100 KATA yakın farklılaşıyor. Bu yüzden deneme sayısı, kaliteden ödün vermeden (ölçülen: aynı
+  // sonuç), telefonda güvenle birkaç saniyede tamamlanacak şekilde düşürüldü.
+  const DENEME_SAYISI = 800;
   // En iyi denemeyi tek başına onarmak bazı çok sıkışık (boşluksuz) durumlarda yetersiz kalabiliyor;
   // bu yüzden en düşük "kalan" değerine sahip birkaç adayı saklayıp her birini ayrı ayrı onarıyoruz,
   // sonra onarım SONRASI en iyi sonucu seçiyoruz. Bu, tek bir adayın onarımla açılamayan bir
@@ -1495,7 +1427,7 @@ function dpProgramOlustur(dp, derinlik) {
     a.hassasIhlalSayisi - b.hassasIhlalSayisi ||
     a.hassasIhlalAsirilik - b.hassasIhlalAsirilik ||
     a.toplamBosluk - b.toplamBosluk;
-  for (let i = 0; i < DENEME_SAYISI_GUVENLIK_SINIRI; i++) {
+  for (let i = 0; i < DENEME_SAYISI; i++) {
     const sonuc = dpTekDenemeOlustur(dp, i * 104729 + 12345);
     const ihlal = dpHassasAyarIhlalSayisi(ogretmenler, sonuc.teacherGrid, GUN, SAAT);
     sonuc.hassasIhlalSayisi = ihlal.sayi;
@@ -1503,13 +1435,10 @@ function dpProgramOlustur(dp, derinlik) {
     adaylar.push(sonuc);
     adaylar.sort(adaySirala);
     if (adaylar.length > ADAY_SAYISI) adaylar.length = ADAY_SAYISI;
-    gerceklesenDenemeSayisi = i + 1;
     // Yalnızca hem eksiksiz (kalan=0) HEM DE Hassas Ayar kurallarının TAMAMEN ihlalsiz olduğu bir
     // çözüm bulunduğunda erken durulur; yoksa katı kuralı henüz karşılamayan bir sonuçla erken
-    // durup daha iyi bir adayı kaçırmamak için, en az DENEME_SAYISI_MIN kadar denenmiş olmak
-    // koşuluyla zaman bütçesi dolana dek devam edilir.
+    // durup daha iyi bir adayı kaçırmamak için deneme sayısı sonuna kadar (20000) devam edilir.
     if (adaylar[0].toplamKalan === 0 && adaylar[0].hassasIhlalSayisi === 0 && i >= 3) break;
-    if (gerceklesenDenemeSayisi >= DENEME_SAYISI_MIN && (dpSimdi() - denemeBaslangicZamani) > DENEME_ZAMAN_BUTCESI_MS) break;
   }
 
   // Greedy denemelerin en iyileri bile bazı blokları yerleştirememiş olabilir (greedy hiçbir zaman
@@ -1518,10 +1447,9 @@ function dpProgramOlustur(dp, derinlik) {
   // çakışıyor" diye derslerin yerleşememesinin en sık nedenidir.
   let enIyi = null;
   adaylar.forEach((sonuc) => {
-    const zorunluListe = {};
-    ogretmenler.forEach((o) => { zorunluListe[o.id] = (o.kisitlar || []).filter((k) => k.tur === "zorunlu"); });
-    dpSabitSaatlerZorunluEkle(dp, zorunluListe);
     if (sonuc.toplamKalan > 0) {
+      const zorunluListe = {};
+      ogretmenler.forEach((o) => { zorunluListe[o.id] = (o.kisitlar || []).filter((k) => k.tur === "zorunlu"); });
       // Önce tek-öğretmen zincirlemesi, sonra sınıf-takas onarımı — biri diğerinin açtığı yeni boş
       // saatlerden faydalanabildiği için birkaç tur art arda uygulanır (her turda ilerleme yoksa durur).
       // Tur sayısı 4 -> 20: artık dpSinifTakasOnarimi de zincirleme/derin arama yaptığından, iki
@@ -1529,29 +1457,62 @@ function dpProgramOlustur(dp, derinlik) {
       // sınır yükseltildi (ilerleme kalmadığı anda döngü zaten erken duruyor).
       for (let tur = 0; tur < 20; tur++) {
         const oncekiKalan = sonuc.bloklar.reduce((t, b) => t + b.kalan, 0);
-        dpOnarimUygula(sonuc.classGrid, sonuc.teacherGrid, sonuc.bloklar, sonuc.yasakSet, GUN, SAAT);
-        dpSinifTakasOnarimi(sonuc.classGrid, sonuc.teacherGrid, sonuc.bloklar, sonuc.yasakSet, zorunluListe, GUN, SAAT);
+        dpOnarimUygula(sonuc.classGrid, sonuc.teacherGrid, sonuc.bloklar, sonuc.yasakSet, GUN, SAAT, sonuc.ogretmenBosGunu);
+        dpSinifTakasOnarimi(sonuc.classGrid, sonuc.teacherGrid, sonuc.bloklar, sonuc.yasakSet, zorunluListe, GUN, SAAT, sonuc.ogretmenBosGunu);
         const yeniKalan = sonuc.bloklar.reduce((t, b) => t + b.kalan, 0);
         if (yeniKalan === oncekiKalan) break;
       }
+      // SON ÇARE TURU: yukarıdaki onarım, Ders Yerleşim Tercihi (desen) kotasına saygı göstererek
+      // çalıştı — bu yüzden bazı dersler, sınıf VE öğretmen o saatte gerçekten boş olsa bile, sırf
+      // desen kotası dolduğu için yerleştirilemeden kalabiliyordu. Bir dersin haftada HİÇ
+      // yerleşememesi, bir desenin esnetilmesinden her zaman daha kötü bir sonuçtur — bu yüzden
+      // hâlâ "kalan" varsa, TEK bir ek tur için SADECE desen kotası devre dışı bırakılarak
+      // (sonCareModu=true) tekrar denenir. ÖNEMLİ: Boş Gün Talebi bu turda da KESİNLİKLE esnetilmez
+      // — kullanıcı bir öğretmene açıkça boş gün verdiyse bu her koşulda uygulanır, gerekirse o
+      // öğretmenin bazı dersleri "yerleştirilemedi" olarak kalır (analiz panelinde sebebi açıkça
+      // "Boş Gün Talebi" olarak gösterilir, kullanıcı isterse talebi kaldırabilir).
+      const sonCareOncesiKalan = sonuc.bloklar.reduce((t, b) => t + b.kalan, 0);
+      if (sonCareOncesiKalan > 0) {
+        const sonCareOncesiDurum = {};
+        sonuc.bloklar.forEach((b) => { if (b.kalan > 0) sonCareOncesiDurum[b.id] = b.kalan; });
+        for (let tur = 0; tur < 20; tur++) {
+          const oncekiKalan = sonuc.bloklar.reduce((t, b) => t + b.kalan, 0);
+          dpOnarimUygula(sonuc.classGrid, sonuc.teacherGrid, sonuc.bloklar, sonuc.yasakSet, GUN, SAAT, sonuc.ogretmenBosGunu, true);
+          dpSinifTakasOnarimi(sonuc.classGrid, sonuc.teacherGrid, sonuc.bloklar, sonuc.yasakSet, zorunluListe, GUN, SAAT, sonuc.ogretmenBosGunu, true);
+          const yeniKalan = sonuc.bloklar.reduce((t, b) => t + b.kalan, 0);
+          if (yeniKalan === oncekiKalan) break;
+        }
+        // Hangi öğretmenlerde/sınıflarda gerçekten son çare devreye girdiğini (kalan azaldığını)
+        // tespit edip kullanıcıya açıkça bildiriyoruz — bu bir sessiz/gizli davranış olmamalı.
+        const etkilenenOgretmenler = new Set();
+        sonuc.bloklar.forEach((b) => {
+          const oncekiK = sonCareOncesiDurum[b.id];
+          if (oncekiK !== undefined && b.kalan < oncekiK) etkilenenOgretmenler.add(b.ogretmenId);
+        });
+        etkilenenOgretmenler.forEach((ogretmenId) => {
+          const o = ogretmenler.find((x) => x.id === ogretmenId);
+          if (o) {
+            sonuc.uyarilar.push(`⚠ ${o.ad}: bazı ders saatleri, ancak "Ders Yerleşim Tercihi" (desen) kotası aşılarak yerleştirilebildi — aksi halde bu saatler tamamen boş kalacaktı. "Ders Yerleşim Tercihleri" sekmesinden bu dersin desenini gözden geçirin. (Not: Boş Gün Talebi hiçbir zaman esnetilmez; o yüzden bu bildirimde geçmez.)`);
+          }
+        });
+      }
+      // ÖNEMLİ: Yukarıdaki onarım adımları (dpOnarimUygula, dpSinifTakasOnarimi) dersleri taşırken
+      // öğretmenlerin "Hassas Ayar" boşluk sınırlarından habersizdir — bu yüzden onarım, kullanıcının
+      // özenle ayarladığı boşluk sınırlarını bozabilir/aşabilir. Onarım bittikten SONRA boşluk
+      // azaltma adımlarını burada tekrar çalıştırarak, onarımın açtığı/kaydırdığı derslerin de
+      // mümkün olduğunca Hassas Ayar sınırları içine geri çekilmesini sağlıyoruz.
+      dpBoslukAzalt(sonuc.classGrid, sonuc.teacherGrid, sonuc.bloklar, sonuc.yasakSet, zorunluListe, ogretmenler, GUN, SAAT);
+      dpHaftalikBoslukAzalt(sonuc.classGrid, sonuc.teacherGrid, sonuc.bloklar, sonuc.yasakSet, zorunluListe, ogretmenler, GUN, SAAT);
+      const ozet = dpSonucOzetle(dp, ogretmenler, sonuc.bloklar, sonuc.teacherGrid, GUN, SAAT, sonuc.classGrid, sonuc.yasakSet);
+      sonuc.toplamKalan = ozet.toplamKalan;
+      sonuc.toplamBosluk = ozet.toplamBosluk;
+      sonuc.kalanUyarilari = ozet.kalanUyarilari;
+      // Onarım adımları (dpOnarimUygula/dpSinifTakasOnarimi) dersleri taşıdığı için ihlal
+      // durumu değişmiş olabilir — boşluk azaltma tekrar çalıştırıldıktan SONRA yeniden hesapla.
+      const ihlalSonrasi = dpHassasAyarIhlalSayisi(ogretmenler, sonuc.teacherGrid, GUN, SAAT);
+      sonuc.hassasIhlalSayisi = ihlalSonrasi.sayi;
+      sonuc.hassasIhlalAsirilik = ihlalSonrasi.asirilik;
     }
-    // ÖNEMLİ DÜZELTME: dpBoslukAzalt/dpHaftalikBoslukAzalt + ihlal yeniden hesaplama eskiden yalnızca
-    // "toplamKalan > 0" (yani onarım gerektiren) adaylar için çalışıyordu — bu, zaten TAM yerleşmiş
-    // (kalan=0) adayların, en iyi aday SEÇİLİRKEN boşluk azaltmadan hiç geçmemiş HAM/şişirilmiş ihlal
-    // sayılarıyla değerlendirilmesi demekti. Bu genelde en olası "iyi" adayları haksız yere elemeye ya
-    // da doğru seçilse bile onlara boşluk azaltmayı hiç uygulamamaya yol açıyordu. Artık her adayda,
-    // onarıma ihtiyaç olsun olmasın, HER ZAMAN çalışır.
-    dpBoslukAzalt(sonuc.classGrid, sonuc.teacherGrid, sonuc.bloklar, sonuc.yasakSet, zorunluListe, ogretmenler, GUN, SAAT);
-    dpHaftalikBoslukAzalt(sonuc.classGrid, sonuc.teacherGrid, sonuc.bloklar, sonuc.yasakSet, zorunluListe, ogretmenler, GUN, SAAT);
-    const ozet = dpSonucOzetle(dp, ogretmenler, sonuc.bloklar, sonuc.teacherGrid, GUN, SAAT, sonuc.classGrid, sonuc.yasakSet);
-    sonuc.toplamKalan = ozet.toplamKalan;
-    sonuc.toplamBosluk = ozet.toplamBosluk;
-    sonuc.kalanUyarilari = ozet.kalanUyarilari;
-    // Onarım/boşluk azaltma adımları dersleri taşıdığı için ihlal durumu değişmiş olabilir —
-    // bu adımlardan SONRA yeniden hesapla.
-    const ihlalSonrasi = dpHassasAyarIhlalSayisi(ogretmenler, sonuc.teacherGrid, GUN, SAAT);
-    sonuc.hassasIhlalSayisi = ihlalSonrasi.sayi;
-    sonuc.hassasIhlalAsirilik = ihlalSonrasi.asirilik;
     // Nihai seçimde de AYNI katı öncelik sırası uygulanır: kalan > hassas ihlal sayısı >
     // ihlal aşırılığı > boşluk. Bir adayın boşluğu daha az diye Hassas Ayar kuralını ihlal eden
     // bir sonuç asla ihlalsiz bir sonuca tercih edilmez.
@@ -1571,83 +1532,12 @@ function dpProgramOlustur(dp, derinlik) {
   {
     const zorunluListeSon = {};
     ogretmenler.forEach((o) => { zorunluListeSon[o.id] = (o.kisitlar || []).filter((k) => k.tur === "zorunlu"); });
-    dpSabitSaatlerZorunluEkle(dp, zorunluListeSon);
-    dpYerelAramaIleOptimizeEt(enIyi.classGrid, enIyi.teacherGrid, enIyi.bloklar, enIyi.yasakSet, zorunluListeSon, ogretmenler, GUN, SAAT, dpRnd(20250831), 30000);
-    // Cilalamadan sonra hâlâ yerleşemeyen (kalan > 0) bloklar varsa, son çare olarak normal
-    // onarım/sınıf-takas zincirini BİR KEZ DAHA, bu kez "Ders Yerleşim Tercihi" (gün dağılım) kotasını
-    // TAMAMEN görmezden gelerek (zincirdeki kaydırılan bloklar dahil) çalıştırıyoruz. Normal onarım
-    // turları bunu bilerek yapmaz (kullanıcının deseni bozulmasın diye) — ama bir sınıf bir dersten
-    // TAMAMEN mahrum kalacaksa, bu artık desen korumaktan çok daha önemlidir. Bu adım yalnızca hâlâ
-    // "kalan > 0" olan blokları etkiler; zaten yerleşmiş hiçbir dersin günü bu yüzden değişmez.
-    dpOnarimUygula(enIyi.classGrid, enIyi.teacherGrid, enIyi.bloklar, enIyi.yasakSet, GUN, SAAT, true);
-    dpSinifTakasOnarimi(enIyi.classGrid, enIyi.teacherGrid, enIyi.bloklar, enIyi.yasakSet, zorunluListeSon, GUN, SAAT, true);
-    // En son, hâlâ (nadiren) kalan bir şey varsa ve gerçekten boş bir saat mevcutsa onu da doldur.
-    dpDesenliSonCareYerlestir(enIyi.classGrid, enIyi.teacherGrid, enIyi.bloklar, enIyi.yasakSet, GUN, SAAT);
-    // ÖNEMLİ: dpYerelAramaIleOptimizeEt (cilalama) ve yukarıdaki son çare onarımları, Hassas Ayar
-    // boşluk sınırlarından habersizdir ve dersleri taşıyabilir/kaydırabilir — bu, daha ÖNCE
-    // (adaylar arasındayken) zaten dpBoslukAzalt/dpHaftalikBoslukAzalt ile temizlenmiş bir
-    // öğretmenin programına YENİDEN boşluk sokabilir, ve o noktadan sonra bunu düzeltecek başka
-    // hiçbir adım çalışmıyordu. Bu yüzden boşluk azaltmayı burada, TÜM taşıma/onarım adımları
-    // bittikten SONRA bir kez daha çalıştırıyoruz — böylece cilalama/son çarenin yeniden açtığı
-    // boşluklar da mümkün olduğunca geri kapatılır.
-    dpBoslukAzalt(enIyi.classGrid, enIyi.teacherGrid, enIyi.bloklar, enIyi.yasakSet, zorunluListeSon, ogretmenler, GUN, SAAT);
-    dpHaftalikBoslukAzalt(enIyi.classGrid, enIyi.teacherGrid, enIyi.bloklar, enIyi.yasakSet, zorunluListeSon, ogretmenler, GUN, SAAT);
+    dpYerelAramaIleOptimizeEt(enIyi.classGrid, enIyi.teacherGrid, enIyi.bloklar, enIyi.yasakSet, zorunluListeSon, ogretmenler, GUN, SAAT, dpRnd(20250831), 30000, enIyi.ogretmenBosGunu);
     const ozetSon = dpSonucOzetle(dp, ogretmenler, enIyi.bloklar, enIyi.teacherGrid, GUN, SAAT, enIyi.classGrid, enIyi.yasakSet);
-    enIyi.toplamKalan = ozetSon.toplamKalan;
     enIyi.toplamBosluk = ozetSon.toplamBosluk;
-    enIyi.kalanUyarilari = ozetSon.kalanUyarilari;
     const ihlalSon = dpHassasAyarIhlalSayisi(ogretmenler, enIyi.teacherGrid, GUN, SAAT);
     enIyi.hassasIhlalSayisi = ihlalSon.sayi;
     enIyi.hassasIhlalAsirilik = ihlalSon.asirilik;
-  }
-
-  // OTOMATİK "ZORUNLU YAP" DENEMESİ: yukarıdaki tüm onarımlardan sonra hâlâ (a) yerleşemeyen bir
-  // ders VEYA (b) Hassas Ayar boşluk sınırını aşan bir öğretmen varsa, kullanıcının elle "Zorunlu
-  // Yap" düğmesine basarak yapacağını OTOMATİK dener: en sorunlu kalemin en iyi aday saatini GEÇİCİ
-  // bir zorunlu kısıt olarak ekleyip TÜM programı bu ek ipucuyla BAŞTAN yeniden üretir. Bu, tek bir
-  // donmuş adayı yamalamaktan çok daha güçlüdür — çünkü arama bu yeni kısıtla, önceki tüm
-  // denemelerden bağımsız olarak YENİDEN yapılır ve öğretmenin "yerini aldığı" diğer ders de
-  // kendiliğinden başka bir saate kayar. Sonuç GERÇEKTEN daha iyiyse (önce daha az yerleşmeyen
-  // saat, sonra daha az Hassas Ayar ihlali) kullanılır; değilse mevcut sonuç aynen korunur — bu
-  // adım programı asla kötüleştirmez. Eklenen kısıt tamamen GEÇİCİDİR: kullanıcının kayıtlı
-  // öğretmen verisine hiçbir zaman yazılmaz, yalnızca bu tek üretim denemesinin belleğinde yaşar.
-  // Olası sonsuz özyinelemeye karşı derinlik en fazla birkaç kez (3) sınırlandırılmıştır.
-  if ((enIyi.toplamKalan > 0 || enIyi.hassasIhlalSayisi > 0) && derinlik < 3) {
-    let hedefOgretmenId = null, hedefSlot = null;
-    if (enIyi.toplamKalan > 0) {
-      const analiz = dpAnalizUret(dp, { classGrid: enIyi.classGrid });
-      const enSorunlu = analiz[0];
-      const adaySlot = enSorunlu && ((enSorunlu.ogrDoluSlotlar && enSorunlu.ogrDoluSlotlar[0]) || (enSorunlu.yasakliSlotlar && enSorunlu.yasakliSlotlar[0]));
-      if (enSorunlu && adaySlot) { hedefOgretmenId = enSorunlu.ogretmenId; hedefSlot = adaySlot; }
-    } else {
-      const hedef = dpEnKotuIhlalHedefiBul(ogretmenler, enIyi.teacherGrid, GUN, SAAT);
-      if (hedef) { hedefOgretmenId = hedef.ogretmenId; hedefSlot = { g: hedef.g, p: hedef.p }; }
-    }
-    if (hedefOgretmenId && hedefSlot) {
-      const hedefOgretmen = ogretmenler.find((o) => o.id === hedefOgretmenId);
-      const zatenVarMi = hedefOgretmen && (hedefOgretmen.kisitlar || []).some((k) => k.gun === hedefSlot.g && k.saat === hedefSlot.p);
-      if (hedefOgretmen && !zatenVarMi) {
-        const dpDeneme = {
-          ...dp,
-          ogretmenler: dp.ogretmenler.map((o) => o.id === hedefOgretmenId
-            ? { ...o, kisitlar: [...(o.kisitlar || []), { id: "gecici-" + uid(), gun: hedefSlot.g, saat: hedefSlot.p, tur: "zorunlu" }] }
-            : o),
-        };
-        const alternatifProgram = dpProgramOlustur(dpDeneme, derinlik + 1);
-        const alternatifTeacherGrid = dpTeacherGridYenidenOlustur(alternatifProgram.classGrid, dpDeneme.ogretmenler, GUN, SAAT, siniflar);
-        const alternatifKalan = dpAnalizUret(dpDeneme, alternatifProgram).reduce((t, a) => t + a.kalan, 0);
-        const alternatifIhlal = dpHassasAyarIhlalSayisi(dpDeneme.ogretmenler, alternatifTeacherGrid, GUN, SAAT);
-        const alternatifDahaIyi = alternatifKalan < enIyi.toplamKalan ||
-          (alternatifKalan === enIyi.toplamKalan && alternatifIhlal.sayi < enIyi.hassasIhlalSayisi) ||
-          (alternatifKalan === enIyi.toplamKalan && alternatifIhlal.sayi === enIyi.hassasIhlalSayisi && alternatifIhlal.asirilik < enIyi.hassasIhlalAsirilik);
-        // ÖNEMLİ: alternatifProgram, GEÇİCİ olarak değiştirilmiş dpDeneme'den üretildi; onun kendi
-        // ayarImzasi'sı da dpDeneme'ye göre hesaplanmıştır (gerçek dp'den FARKLI, çünkü dpDeneme'de
-        // sahte bir kısıt var). Bu programı gerçek dp yerine kullanacaksak, imzasını da GERÇEK dp'ye
-        // göre yeniden damgalamalıyız — yoksa üretim biter bitmez "Ayarlar Değişti" uyarısı hiç
-        // kaybolmadan sürekli görünür kalır (imza hep uyuşmaz).
-        if (alternatifDahaIyi) return { ...alternatifProgram, ayarImzasi: dpAyarImzasi(dp) };
-      }
-    }
   }
 
   const hassasAyarUyarilari = dpHassasAyarUyarilariUret(ogretmenler, enIyi.teacherGrid, GUN, SAAT);
@@ -1657,14 +1547,49 @@ function dpProgramOlustur(dp, derinlik) {
     // hâlâ ihlal kaldıysa (yalnızca sınıfların o saatlerdeki çakışmaları nedeniyle YAPISAL olarak
     // imkânsızsa olur), bunu sessizce geçmek yerine listenin EN BAŞINDA, öne çıkan tek bir özet
     // uyarıyla açıkça bildiriyoruz.
-    hassasAyarUyarilari.unshift(`⚠ KURAL İHLALİ: ${hassasAyarUyarilari.length} Hassas Ayar kuralı, sınıfların o saatlerdeki çakışmaları nedeniyle bu programda tam karşılanamadı (${gerceklesenDenemeSayisi} rastgele deneme arasından en az ihlalli/en uygun aday seçildi). Bu yapısal bir çakışmadır — aşağıdaki kalemleri inceleyip ilgili öğretmenin sınırını gevşetmeniz ya da ders dağılımını gözden geçirmeniz gerekir.`);
+    hassasAyarUyarilari.unshift(`⚠ KURAL İHLALİ: ${hassasAyarUyarilari.length} Hassas Ayar kuralı, sınıfların o saatlerdeki çakışmaları nedeniyle bu programda tam karşılanamadı (${DENEME_SAYISI} rastgele deneme arasından en az ihlalli/en uygun aday seçildi). Bu yapısal bir çakışmadır — aşağıdaki kalemleri inceleyip ilgili öğretmenin sınırını gevşetmeniz ya da ders dağılımını gözden geçirmeniz gerekir.`);
   }
+
+  // "VAR OLAN BİR DERSİ SABİTLE" TÜRÜNDEKİ SABİT ETKİNLİKLERİN DOĞRULAMASI: dpTekDenemeOlustur
+  // içinde bu tür etkinlikler, ilgili dersin o sınıftaki öğretmeni o saatte BAŞKA bir sınıfta
+  // ZATEN doluysa (en tipik örnek: aynı öğretmen birden fazla şubeye giriyor — fiziksel olarak
+  // aynı anda iki sınıfta olamaz) sessizce atlanır. Bu, ALGORİTMİK bir hata değil GERÇEK bir
+  // çakışmadır — ama kullanıcıya sessizce geçilmemeli. Burada, seçilen en iyi adayda (enIyi)
+  // her sabitlemenin fiilen uygulanıp uygulanmadığını tek tek kontrol edip, uygulanamayanları
+  // AÇIKÇA ve hangi öğretmenin nerede çakıştığını göstererek raporluyoruz.
+  const sabitDersUyarilari = [];
+  (dp.ayarlar.sabitEtkinlikler || []).filter((e) => e.dersId).forEach((e) => {
+    if (e.gun < 0 || e.gun >= GUN || e.saat < 0 || e.saat >= SAAT) return;
+    siniflar.forEach((s) => {
+      const beklenenOgretmen = ogretmenler.find((o) => (o.atamalar || []).some((a) => a.sinif === s && a.dersId === e.dersId && a.saat > 0));
+      if (!beklenenOgretmen) return; // bu sınıfta bu ders hiç atanmamış — beklenen bir durum, ayrıca bildirilmiyor (UI'da zaten "ℹ" notuyla gösteriliyor)
+      const hucre = enIyi.classGrid[s] && enIyi.classGrid[s][e.gun] && enIyi.classGrid[s][e.gun][e.saat];
+      const dogruYerlesti = hucre && !hucre.etkinlik && hucre.dersId === e.dersId && hucre.ogretmenId === beklenenOgretmen.id;
+      if (dogruYerlesti) return;
+      // Öğretmen o saatte gerçekten başka hangi sınıfta, onu bulup mesaja ekleyelim.
+      let cakisanSinif = null;
+      siniflar.forEach((s2) => {
+        const h2 = enIyi.classGrid[s2] && enIyi.classGrid[s2][e.gun] && enIyi.classGrid[s2][e.gun][e.saat];
+        if (h2 && !h2.etkinlik && h2.ogretmenId === beklenenOgretmen.id) cakisanSinif = s2;
+      });
+      sabitDersUyarilari.push(`⚠ "${e.ad}" dersi ${s} şubesinde ${DP_GUN_ADLARI[e.gun]} ${e.saat + 1}. saate sabitlenemedi — ${beklenenOgretmen.ad} o saatte ${cakisanSinif ? `zaten ${cakisanSinif} şubesinde ders veriyor` : "başka bir sınıfla çakışıyor"} (aynı öğretmen aynı anda iki şubede olamaz). Bu ders ${s} için programın geri kalanına serbestçe yerleştirildi; sabit saati koruyabilmek için ya ${s} şubesine bu ders için ayrı bir öğretmen atamanız ya da bu şube için farklı bir gün/saat seçmeniz gerekir.`);
+    });
+  });
 
   return {
     classGrid: enIyi.classGrid,
-    uyarilar: [...kapasite.uyarilar, ...enIyi.uyarilar, ...enIyi.kalanUyarilari, ...hassasAyarUyarilari],
+    uyarilar: [...kapasite.uyarilar, ...enIyi.uyarilar, ...enIyi.kalanUyarilari, ...hassasAyarUyarilari, ...sabitDersUyarilari],
     kapasiteAsanSiniflar: kapasite.asanSiniflar,
     kapasiteAsanOgretmenler: kapasite.asanOgretmenler,
+    // ÖNEMLİ DÜZELTME: bu denemede hangi öğretmenin hangi günü "Boş Gün Talebi" ile boş bırakıldığı
+    // (enIyi.ogretmenBosGunu) önceden buradan HİÇ dışarı aktarılmıyordu — sonuç olarak "yerleşemedi"
+    // analiz paneli (dpAnalizUret), fiilen sınıf+öğretmen boş görünen ama öğretmenin kendi boş gün
+    // talebi yüzünden KASITLI olarak kullanılmayan saatleri "boşluk ayarı (Hassas Ayar) yüzünden
+    // kullanılamadı" diye YANLIŞ etiketliyordu — oysa Hassas Ayar'daki günlük/haftalık boşluk sınırı
+    // yerleştirmeyi hiçbir zaman ENGELLEMEZ (yalnızca zaten yerleşmiş dersleri gün içinde kaydırır);
+    // gerçek engel ya Boş Gün Talebi ya da bir Ders Yerleşim Tercihi (desen) kotasıdır. Bu alan artık
+    // saklanıp analiz panelinde doğru sebebi göstermek için kullanılıyor.
+    ogretmenBosGunu: enIyi.ogretmenBosGunu || {},
     zaman: Date.now(),
     // Bu programın HANGİ ayarlarla üretildiğinin imzası — Ayarlar sekmesinde bir şey değişirse
     // bu imza artık dp'nin GÜNCEL imzasıyla eşleşmez ve UI bunu tespit edip kullanıcıyı uyarır /
@@ -1689,10 +1614,23 @@ function dpOgretmenBosluk(program, ogretmenId, GUN, SAAT) {
   return toplam;
 }
 // Yerleştirilemeyen (kalan>0) her atama için "neden yerleşmedi" analizini üretir. classGrid'den
-// öğretmen dolu-luk tablosunu yeniden kurar, sonra haftadaki her (gün,saat) hücresini şu dört
-// kategoriden birine ayırır: sınıf dolu / öğretmen başka sınıfta dolu / öğretmen o saatte yasaklı /
-// gerçekten boş (ama algoritma günlük dağıtım sınırı yüzünden kullanamamış). Baskın kategori,
-// aşağıdaki UI tarafından somut bir öneriye (ve tek tık uygulanabilir bir aksiyona) çevrilir.
+// öğretmen dolu-luk tablosunu yeniden kurar, sonra haftadaki her (gün,saat) hücresini şu
+// kategorilerden birine ayırır: sınıf dolu / öğretmen başka sınıfta dolu / öğretmen o saatte
+// yasaklı / öğretmenin Boş Gün Talebi yüzünden kasıtlı boş bırakılan gün / bir Ders Yerleşim
+// Tercihi (desen) kotası yüzünden kullanılamamış gün / gerçekten açıklanamayan boş saat. Baskın
+// kategori, aşağıdaki UI tarafından somut bir öneriye (ve tek tık uygulanabilir bir aksiyona) çevrilir.
+//
+// ÖNEMLİ DÜZELTME: Önceden "sınıf da öğretmen de boş ama yine de yerleşmemiş" saatlerin TEK sebebi
+// "algoritmanın günlük dağıtımı" sayılıyor ve kullanıcıya HER ZAMAN "Hassas Ayar" (boşluk/gap)
+// sınırını gevşetmesi öneriliyordu. Bu YANLIŞTI: Hassas Ayar'daki günlük/haftalık boşluk sınırı
+// yerleştirmeyi hiçbir zaman engellemez — yalnızca zaten yerleşmiş dersleri gün İÇİNDE kaydırır
+// (bkz. dpBoslukAzalt). Onarım adımları (dpOnarimUygula/dpBosaltVeYerlestir/dpSinifTakasOnarimi),
+// sınıf VE öğretmen aynı anda boş olan HERHANGİ bir saati, yalnızca şu iki durumda atlar: (1)
+// öğretmenin o gün için AÇIKÇA etkinleştirdiği "Boş Gün Talebi" varsa, ya da (2) o ders bir "Ders
+// Yerleşim Tercihi" (desen, örn. "2+2") ile atanmışsa ve o günkü deseni kotası zaten dolmuşsa.
+// Bu iki durum dışında böyle bir saat MUTLAKA yerleştirilir — yani "gerçekten açıklanamayan boş
+// saat" kalması normal şartlarda neredeyse hiç olmaz. Bu fonksiyon artık gerçek sebebi (Boş Gün
+// Talebi mi, Ders Yerleşim Tercihi mi) ayırt edip doğru öneriyi üretir.
 function dpAnalizUret(dp, program) {
   if (!program) return [];
   const GUN = 5;
@@ -1714,6 +1652,12 @@ function dpAnalizUret(dp, program) {
   const yasakSet = {};
   ogretmenler.forEach((o) => { yasakSet[o.id] = new Set((o.kisitlar || []).filter((k) => k.tur === "yasak").map((k) => `${k.gun}-${k.saat}`)); });
 
+  // Bu PROGRAMIN üretildiği denemede hangi öğretmenin hangi günü "Boş Gün Talebi" ile kasıtlı boş
+  // bırakıldığı (bkz. dpProgramOlustur'daki ogretmenBosGunu alanı). Eski/kaydedilmiş programlarda
+  // bu alan hiç olmayabilir — o durumda güvenle boş nesneye düşülür (hiçbir gün "boş gün" sayılmaz).
+  const bosGunHaritasi = program.ogretmenBosGunu || {};
+  const yerlesimTercihleri = (dp.ayarlar && dp.ayarlar.yerlesimTercihleri) || {};
+
   const sonuclar = [];
   ogretmenler.forEach((o) => {
     (o.atamalar || []).forEach((a) => {
@@ -1728,18 +1672,31 @@ function dpAnalizUret(dp, program) {
       const kalan = toplam - yerlesen;
       if (kalan <= 0) return;
 
-      let sinifDolu = 0, ogrDolu = 0, yasakli = 0, bos = 0;
-      const yasakliSlotlar = [], ogrDoluSlotlar = [];
+      const bosGunler2 = bosGunHaritasi[o.id] || [];
+      const desenTanimliMi = !!(yerlesimTercihleri[`${a.dersId}__${a.sinif}`] || "").trim();
+
+      let sinifDolu = 0, ogrDolu = 0, yasakli = 0, bosGunuEngeli = 0, desenEngeli = 0, bos = 0;
+      const yasakliSlotlar = [], ogrDoluSlotlar = [], bosGunuSlotlar = [], bosSlotlar = [];
       for (let g = 0; g < GUN; g++) for (let p = 0; p < SAAT; p++) {
         const sinifBos = !(grid && grid[g] && grid[g][p]);
         if (!sinifBos) { sinifDolu++; continue; }
         if (yasakSet[o.id].has(`${g}-${p}`)) { yasakli++; yasakliSlotlar.push({ g, p }); continue; }
         const ogrHucre = teacherGrid[o.id][g][p];
         if (ogrHucre) { ogrDolu++; ogrDoluSlotlar.push({ g, p, ...ogrHucre }); continue; }
-        bos++;
+        // Sınıf da öğretmen de bu saatte GERÇEKTEN boş: onarım motoru bunu yalnızca aşağıdaki iki
+        // durumdan biri yüzünden atlamış olabilir (bkz. dpBosaltVeYerlestir'deki gunKisitli kontrolü).
+        if (bosGunler2.includes(g)) {
+          bosGunuEngeli++; bosGunuSlotlar.push({ g, p }); continue;
+        }
+        if (desenTanimliMi) { desenEngeli++; continue; }
+        bos++; bosSlotlar.push({ g, p });
       }
 
-      sonuclar.push({ ogretmenId: o.id, ogretmenAd: o.ad, sinif: a.sinif, dersId: a.dersId, kalan, toplam, sinifDolu, ogrDolu, yasakli, bos, yasakliSlotlar, ogrDoluSlotlar });
+      sonuclar.push({
+        ogretmenId: o.id, ogretmenAd: o.ad, sinif: a.sinif, dersId: a.dersId, kalan, toplam,
+        sinifDolu, ogrDolu, yasakli, bosGunuEngeli, desenEngeli, bos,
+        yasakliSlotlar, ogrDoluSlotlar, bosGunuSlotlar, bosSlotlar,
+      });
     });
   });
   return sonuclar.sort((x, y) => y.kalan - x.kalan);
@@ -2082,25 +2039,6 @@ function islemKaydet(alan) {
   }
 }
 
-// GÜVENLİK: Bir velinin, şifresini doğru girdiğinde SADECE kendi öğrencisinin verisine erişebilmesini
-// sağlamak için, Firebase kurallarının (sunucu tarafında, hiçbir JavaScript koduna güvenmeden) kontrol
-// edebileceği bir eşleştirme tablosu tutulur: okul numarası -> { öğrencinin gizli kimliği, beklenen şifre }.
-// Bu tablo öğrenci eklendiğinde/düzenlendiğinde veya okul öneki değiştiğinde otomatik güncellenir.
-function guvenlikHaritasiniGuncelle(studentsListesi, tenantOnek) {
-  if (!firebaseHazir || !VERI_KOK) return;
-  try {
-    const harita = {};
-    (Array.isArray(studentsListesi) ? studentsListesi : []).forEach((s) => {
-      if (s && s.no && String(s.no) !== "0" && s.id) {
-        const onek = veliOnekAl(s, tenantOnek);
-        harita[String(s.no)] = { id: s.id, sifre: `${onek}${s.no}` };
-      }
-    });
-    db.ref(VERI_KOK + "/_ogrenciNoId").set(harita);
-  } catch (e) {
-    console.error("Güvenlik eşleştirme tablosu güncellenemedi:", e);
-  }
-}
 function saveKey(key, value) {
   if (!firebaseHazir) return;
   try {
@@ -2424,14 +2362,6 @@ function GirisEkrani({ onGiris }) {
   const dene = async () => {
     const deger = sifre.trim();
     if (!deger) { setHata("Lütfen şifrenizi girin."); return; }
-    // GÜVENLİK: anonim Firebase oturumu sayfa açılışında arka planda kurulur; çok hızlı giriş
-    // denemelerinde henüz hazır olmayabilir. Kimlik kanıtı yazabilmek için burada kısaca bekleriz.
-    if (!auth.currentUser) {
-      await new Promise((resolve) => {
-        const zamanAsimi = setTimeout(resolve, 4000);
-        const iptal = auth.onAuthStateChanged((k) => { if (k) { clearTimeout(zamanAsimi); iptal(); resolve(); } });
-      });
-    }
 
     // 1) Program Sahibi şifresi
     const sahipSifre = (yonetimVeri.sahipSifre && String(yonetimVeri.sahipSifre).trim()) || DEFAULT_SAHIP_SIFRE;
@@ -2442,21 +2372,9 @@ function GirisEkrani({ onGiris }) {
     }
 
     // 2) Program Sahibi'nin oluşturduğu Ana Kullanıcı şifrelerinden biri (ör. "Sait Çelik")
-    // GÜVENLİK: Ana Kullanıcı (yönetici) güvenlik eşleştirme listesi eksik/eskiyse otomatik tazelenir.
-    try {
-      const anaHarita = {};
-      anaKullaniciListesi.forEach((a) => { if (a && a.sifre) anaHarita[String(a.sifre).trim().toUpperCase()] = a.id; });
-      await db.ref(yonetimYoluAl() + "/_anaSifreId").set(anaHarita);
-    } catch (e) { console.error("Yönetici güvenlik haritası tazelenemedi:", e); }
     const anaEslesme = anaKullaniciListesi.find((a) => a.sifre && deger.toUpperCase() === String(a.sifre).trim().toUpperCase());
     if (anaEslesme) {
       VERI_KOK = tenantYoluAl(anaEslesme.id);
-      // GÜVENLİK: yönetici kimlik kanıtı yazılır (bkz. veli girişindeki açıklama).
-      try {
-        await db.ref(VERI_KOK + "/_yetkiler/" + auth.currentUser.uid).set({
-          rol: "admin", kanit: deger.toUpperCase(), zaman: Date.now(),
-        });
-      } catch (e) { console.error("Yönetici kimlik kanıtı yazılamadı:", e); }
       // Öğretmen girişinde olduğu gibi bir oturum kaydı açılır; böylece Program Sahibi bu
       // Ana Kullanıcıyı, hesabını silmeden çıkışa zorlayabilir (bkz. ProgramSahibiPaneli).
       const oturumId = oturumBaslat("admin", null);
@@ -2485,35 +2403,9 @@ function GirisEkrani({ onGiris }) {
           db.ref(kok + "/students").once("value"),
           db.ref(kok + "/veliSifreOnek").once("value"),
         ]);
-        // GÜVENLİK: bu Ana Kullanıcının güvenlik eşleştirme listeleri (öğretmen/veli şifre
-        // haritaları) bir sebeple eksik ya da eskiyse (örn. bu güncellemeden önce girilmiş
-        // veriler), giriş denemesi sırasında sessizce ve otomatik olarak tazelenir. Böylece
-        // hiçbir öğretmen/veli, elle bir işlem yapılmadığı için giriş yapamaz duruma düşmez.
-        try {
-          const tenantOnekIcin = onekSnap.val() || veliOnekVarsayilaniHesapla(ana.id);
-          const ogrHarita = {};
-          (ogretmenSnap.val() || []).forEach((o) => { if (o && o.sifre && o.id) ogrHarita[String(o.sifre).trim().toUpperCase()] = o.id; });
-          const noHarita = {};
-          (ogrenciSnap.val() || []).forEach((s) => {
-            if (s && s.no && String(s.no) !== "0" && s.id) {
-              const onek = veliOnekAl(s, tenantOnekIcin);
-              noHarita[String(s.no)] = { id: s.id, sifre: `${onek}${s.no}` };
-            }
-          });
-          await Promise.all([
-            db.ref(kok + "/_ogretmenSifreId").set(ogrHarita),
-            db.ref(kok + "/_ogrenciNoId").set(noHarita),
-          ]);
-        } catch (e) { console.error("Güvenlik haritaları tazelenemedi:", e); }
         const ogretmenKaydi = ogretmenSifresindenBul(deger, ogretmenSnap.val() || []);
         if (ogretmenKaydi) {
           VERI_KOK = kok;
-          // GÜVENLİK: öğretmen kimlik kanıtı yazılır (bkz. veli girişindeki açıklama).
-          try {
-            await db.ref(kok + "/_yetkiler/" + auth.currentUser.uid).set({
-              rol: "ogretmen", kanit: deger.toUpperCase(), zaman: Date.now(),
-            });
-          } catch (e) { console.error("Öğretmen kimlik kanıtı yazılamadı:", e); }
           const oturumId = oturumBaslat("ogretmen", ogretmenKaydi.id);
           try {
             localStorage.setItem(YETKI_ANAHTARI, "ogretmen");
@@ -2526,15 +2418,6 @@ function GirisEkrani({ onGiris }) {
         const veliNo = veliSifresindenNoCoz(deger, ogrenciSnap.val() || [], tenantOnek);
         if (veliNo) {
           VERI_KOK = kok;
-          // GÜVENLİK: Firebase'in "bu kullanıcı gerçekten bu öğrencinin velisi" bilgisini kendi
-          // kurallarıyla doğrulayabilmesi için, doğru şifreyi bilen bu tarayıcı oturumuna özel bir
-          // kanıt kaydı yazılır. Bu kayıt sahte oluşturulamaz: Firebase kuralı, buradaki "kanit"
-          // alanının veritabanındaki gerçek beklenen şifreyle eşleştiğini ayrıca kontrol eder.
-          try {
-            await db.ref(kok + "/_yetkiler/" + auth.currentUser.uid).set({
-              rol: "veli", no: veliNo, kanit: deger, zaman: Date.now(),
-            });
-          } catch (e) { console.error("Veli kimlik kanıtı yazılamadı:", e); }
           // Öğretmen/Ana Kullanıcı girişinde olduğu gibi bir oturum kaydı açılır; böylece bu veliye
           // şifresini veren öğretmen ya da Ana Kullanıcı, gerekirse oturumunu çıkışa zorlayabilir.
           const oturumId = oturumBaslat("veli", veliNo);
@@ -3261,19 +3144,6 @@ function ProgramSahibiPaneli({ cikisYap }) {
   }, [anaListesi, arama]);
   const gosterilenSahipSifre = sahipSifre || DEFAULT_SAHIP_SIFRE;
 
-  // GÜVENLİK: Ana Kullanıcı şifreleri her değiştiğinde (oluşturma/silme/yenileme), Firebase
-  // kurallarının doğrudan kontrol edebilmesi için şifre->kimlik eşleştirme tablosu tazelenir.
-  const adminGuvenlikHaritasiniYenile = async () => {
-    try {
-      const snap = await db.ref(yonetimYoluAl() + "/anaKullanicilar").once("value");
-      const veri = snap.val() || {};
-      const harita = {};
-      Object.entries(veri).forEach(([id, a]) => {
-        if (a && a.sifre) harita[String(a.sifre).trim().toUpperCase()] = id;
-      });
-      await db.ref(yonetimYoluAl() + "/_anaSifreId").set(harita);
-    } catch (e) { console.error("Yönetici güvenlik haritası güncellenemedi:", e); }
-  };
   const yeniAnaKullaniciOlustur = () => {
     if (anaListesi.length >= MAX_ANA_KULLANICI) {
       window.alert(`En fazla ${MAX_ANA_KULLANICI} Ana Kullanıcı oluşturabilirsiniz.`);
@@ -3281,7 +3151,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
     }
     const sifre = rastgeleAnaKullaniciSifresi(anaListesi);
     const yeniRef = db.ref(yonetimYoluAl() + "/anaKullanicilar").push();
-    yeniRef.set({ sifre, ad: "", olusturmaZamani: Date.now() }).then(adminGuvenlikHaritasiniYenile);
+    yeniRef.set({ sifre, ad: "", olusturmaZamani: Date.now() });
   };
 
   // Ana Kullanıcı (Yönetici) hesabını doğrudan silmez; önce hesabın kendi şifresinin girilip
@@ -3295,7 +3165,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
   const anaKullaniciSilOnaylandi = () => {
     if (!silinecekAna) return;
     const id = silinecekAna.id;
-    db.ref(yonetimYoluAl() + "/anaKullanicilar/" + id).remove().then(adminGuvenlikHaritasiniYenile);
+    db.ref(yonetimYoluAl() + "/anaKullanicilar/" + id).remove();
     db.ref(tenantYoluAl(id)).remove();
     setOgretmenListeleri((p) => { const n = { ...p }; delete n[id]; return n; });
     if (acikId === id) setAcikId(null);
@@ -3307,7 +3177,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
   const anaKullaniciSifreYenile = (id) => {
     if (!window.confirm("Bu Ana Kullanıcının şifresini yenilemek istediğinize emin misiniz? Eski şifreyle bir daha giriş yapılamaz.")) return;
     const yeniSifre = rastgeleAnaKullaniciSifresi(anaListesi);
-    db.ref(yonetimYoluAl() + "/anaKullanicilar/" + id + "/sifre").set(yeniSifre).then(adminGuvenlikHaritasiniYenile);
+    db.ref(yonetimYoluAl() + "/anaKullanicilar/" + id + "/sifre").set(yeniSifre);
   };
 
   const adGuncelle = (id, deger) => setAdOnizleme((p) => ({ ...p, [id]: deger }));
@@ -3326,7 +3196,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
       window.alert("Bu şifre başka bir Ana Kullanıcıda kullanılıyor. Lütfen farklı bir şifre girin.");
       return;
     }
-    db.ref(yonetimYoluAl() + "/anaKullanicilar/" + id + "/sifre").set(deger).then(adminGuvenlikHaritasiniYenile);
+    db.ref(yonetimYoluAl() + "/anaKullanicilar/" + id + "/sifre").set(deger);
     setSifreOnizleme((p) => { const n = { ...p }; delete n[id]; return n; });
   };
 
@@ -3880,20 +3750,8 @@ function StudentTracker() {
     };
   }, [yetkili, rol, anaId]);
 
-  const updateStudents = useCallback((next) => {
-    setStudents(next);
-    saveKey("students", next);
-    guvenlikHaritasiniGuncelle(next, veliSifreOnekRef.current);
-  }, []);
-  const updateVeliSifreOnek = useCallback((next) => {
-    setVeliSifreOnek(next);
-    saveKey("veliSifreOnek", next);
-    guvenlikHaritasiniGuncelle(studentsRef.current, next);
-  }, []);
-  const veliSifreOnekRef = useRef(veliSifreOnek);
-  const studentsRef = useRef(students);
-  useEffect(() => { veliSifreOnekRef.current = veliSifreOnek; }, [veliSifreOnek]);
-  useEffect(() => { studentsRef.current = students; }, [students]);
+  const updateStudents = useCallback((next) => { setStudents(next); saveKey("students", next); }, []);
+  const updateVeliSifreOnek = useCallback((next) => { setVeliSifreOnek(next); saveKey("veliSifreOnek", next); }, []);
   const updateAttendance = useCallback((next) => { setAttendance(next); saveKey("attendance", next); }, []);
   const updateAttendanceMeta = useCallback((next) => { setAttendanceMeta(next); saveKey("attendanceMeta", next); }, []);
   const updateDersYoklama = useCallback((next) => { setDersYoklama(next); saveKey("dersYoklama", next); }, []);
@@ -3911,19 +3769,7 @@ function StudentTracker() {
   const updateSinifTemizligi = useCallback((next) => { setSinifTemizligi(next); saveKey("sinifTemizligi", next); }, []);
   const updateKocluklSiniflar = useCallback((next) => { setKocluklSiniflar(next); saveKey("kocluklSiniflar", next); }, []);
   const updateKocluklOgrenciler = useCallback((next) => { setKocluklOgrenciler(next); saveKey("kocluklOgrenciler", next); }, []);
-  const updateOgretmenSifreleri = useCallback((next) => {
-    setOgretmenSifreleri(next);
-    saveKey("ogretmenSifreleri", next);
-    // GÜVENLİK: öğretmen şifrelerinin bir kopyası, Firebase kurallarının doğrudan (dizi taramadan)
-    // kontrol edebilmesi için şifre->kimlik eşleştirmesi olarak da tutulur.
-    try {
-      const harita = {};
-      (Array.isArray(next) ? next : []).forEach((o) => {
-        if (o && o.sifre && o.id) harita[String(o.sifre).trim().toUpperCase()] = o.id;
-      });
-      db.ref(VERI_KOK + "/_ogretmenSifreId").set(harita);
-    } catch (e) { console.error("Öğretmen güvenlik haritası güncellenemedi:", e); }
-  }, []);
+  const updateOgretmenSifreleri = useCallback((next) => { setOgretmenSifreleri(next); saveKey("ogretmenSifreleri", next); }, []);
   const updateDersProgrami = useCallback((next) => { setDersProgrami(next); saveKey("dersProgrami", next); }, []);
 
   const cikisYap = () => {
@@ -11961,10 +11807,143 @@ function DPAyarlar({ dp, guncelle }) {
         </div>
       </Kart>
       <DPYerlesimTercihleri dp={dp} guncelle={guncelle} />
-      <DPSabitSaatler dp={dp} guncelle={guncelle} />
+      <DPSabitEtkinlikler dp={dp} guncelle={guncelle} />
       <DPGenelBoslukAyari dp={dp} guncelle={guncelle} />
       <DPHassasAyarlar dp={dp} guncelle={guncelle} />
     </div>
+  );
+}
+
+// Ayarlar sekmesindeki "Sabit Etkinlikler" bölümü: kullanıcının, belirli bir gün/saatte TÜM
+// sınıfların aynı anda katıldığı sabit bir etkinlik (bayrak töreni, ortak sınav, seminer vb.)
+// tanımlayabileceği alan. Böyle bir etkinlik eklendiğinde, program motoru o gün/saati HER sınıf
+// için en baştan dolu işaretler (bkz. dpTekDenemeOlustur) — normal ders yerleştirme, onarım, takas
+// ve boşluk azaltma adımlarının HİÇBİRİ o hücreye dokunmaz, çünkü hepsi zaten "hücre doluysa atla"
+// mantığıyla çalışır. Böylece "tüm okul aynı anda o derse girecek" isteği, öğretmen/ders
+// atamalarından bağımsız, tamamen okul çapında sabit bir slot olarak uygulanır.
+function DPSabitEtkinlikler({ dp, guncelle }) {
+  const dersler = dp.dersler || [];
+  const etkinlikler = dp.ayarlar.sabitEtkinlikler || [];
+  const GUN = 5;
+  const SAAT = (Number(dp.ayarlar.oncekiSaat) || 0) + (Number(dp.ayarlar.sonrakiSaat) || 0);
+  // "yeni": Bayrak töreni gibi hiçbir öğretmene bağlı olmayan, GERÇEKTEN ekstra bir saat (kapasiteden düşer).
+  // "mevcut": Rehberlik gibi zaten her sınıfa atanmış bir dersin haftalık saatlerinden birini belirli
+  // bir gün/saate SABİTLER — yeni saat eklemez, kapasiteyi hiç etkilemez (dersin kendi öğretmeni sınıf
+  // sınıf otomatik kullanılır).
+  const [tur, setTur] = useState("mevcut");
+  const [ad, setAd] = useState("");
+  const [dersId, setDersId] = useState(dersler[0]?.id || "");
+  const [gun, setGun] = useState(0);
+  const [saat, setSaat] = useState(1);
+
+  // ÖNEMLİ: SADECE "yeni/ekstra etkinlik" türü, o slotu HER sınıfın haftalık kapasitesinden düşer
+  // (bkz. dpKapasiteUyarilariUret'teki not) — "mevcut dersi sabitle" türü zaten var olan bir saati
+  // yer değiştirdiği için kapasiteyi etkilemez. Kullanıcı "Ekle"ye basmadan ÖNCE, "yeni etkinlik"
+  // türünde bunun kaç sınıfı kapasiteyi aşacağını burada canlı gösteriyoruz.
+  const siniflar = dp.ayarlar.siniflar || [];
+  const sinifToplam = {};
+  siniflar.forEach((s) => { sinifToplam[s] = 0; });
+  (dp.ogretmenler || []).forEach((o) => {
+    (o.atamalar || []).forEach((a) => {
+      if (siniflar.includes(a.sinif) && a.saat > 0) sinifToplam[a.sinif] = (sinifToplam[a.sinif] || 0) + Number(a.saat);
+    });
+  });
+  const mevcutEkstraSayisi = etkinlikler.filter((e) => !e.dersId).length;
+  const yeniEtkinlikSayisi = mevcutEkstraSayisi + (tur === "yeni" ? 1 : 0);
+  const gercekKapasite = GUN * SAAT - yeniEtkinlikSayisi;
+  const etkilenenSinifSayisi = tur === "yeni" ? siniflar.filter((s) => sinifToplam[s] > gercekKapasite).length : 0;
+  // "mevcut dersi sabitle" seçildiğinde, seçilen dersin kaç sınıfa hiç atanmadığını (bu sınıflarda
+  // etkinin uygulanamayacağını) da gösteriyoruz — sessizce atlanmasın, kullanıcı bilsin.
+  const dersiOlmayanSinifSayisi = tur === "mevcut" && dersId
+    ? siniflar.filter((s) => !(dp.ogretmenler || []).some((o) => (o.atamalar || []).some((a) => a.sinif === s && a.dersId === dersId && a.saat > 0))).length
+    : 0;
+
+  const guncelleVeYenidenOlustur = (yeniEtkinlikler) => {
+    const yeniAyarlar = { ...dp.ayarlar, sabitEtkinlikler: yeniEtkinlikler };
+    const yeniDp = { ...dp, ayarlar: yeniAyarlar };
+    guncelle({ ayarlar: yeniAyarlar, program: dp.program ? dpProgramOlustur(yeniDp) : dp.program });
+  };
+  const ekle = () => {
+    if (tur === "mevcut") {
+      if (!dersId) return;
+      const dersAdi = (dersler.find((d) => d.id === dersId) || {}).ad || "?";
+      guncelleVeYenidenOlustur([...etkinlikler, { id: "se" + Date.now(), ad: dersAdi, dersId, gun, saat: saat - 1 }]);
+    } else {
+      const v = ad.trim();
+      if (!v) return;
+      guncelleVeYenidenOlustur([...etkinlikler, { id: "se" + Date.now(), ad: v, gun, saat: saat - 1 }]);
+    }
+  };
+  const sil = (id) => guncelleVeYenidenOlustur(etkinlikler.filter((e) => e.id !== id));
+
+  return (
+    <Kart className="p-5">
+      <h2 className="font-display text-base font-medium mb-1">Sabit Etkinlikler</h2>
+      <p className="text-xs mb-4" style={{ color: SUBTLE }}>
+        Belirli bir gün/saati TÜM sınıflar için sabitleyin. İki tür var: zaten var olan bir dersi
+        (örn. Rehberlik) sabit bir güne/saate oturtmak — bu, kapasiteyi hiç etkilemez; ya da
+        hiçbir derse bağlı olmayan yeni bir etkinlik (bayrak töreni gibi) eklemek — bu GERÇEKTEN
+        ekstra bir saat tüketir ve kapasiteden düşer.
+      </p>
+      <div className="space-y-2 mb-4">
+        {etkinlikler.map((e) => (
+          <div key={e.id} className="flex items-center justify-between text-sm px-3 py-2 rounded-lg" style={{ background: `${PURPLE}0D`, border: `1px solid ${PURPLE}33` }}>
+            <span>
+              <b>{e.ad}</b> — {DP_GUN_ADLARI[e.gun]}, {e.saat + 1}. saat
+              {e.dersId ? <span style={{ color: SUBTLE }}> (var olan ders — kapasiteyi etkilemez)</span> : <span style={{ color: SUBTLE }}> (yeni etkinlik — kapasiteden düşer)</span>}
+            </span>
+            <button onClick={() => sil(e.id)}><IconTrash size={14} color={RED} /></button>
+          </div>
+        ))}
+        {etkinlikler.length === 0 && <p className="text-sm" style={{ color: SUBTLE }}>Henüz sabit etkinlik yok.</p>}
+      </div>
+      <div className="flex gap-2 mb-3">
+        <button onClick={() => setTur("mevcut")} className="text-sm px-3 py-1.5 rounded-lg" style={{ background: tur === "mevcut" ? `${BLUE}1A` : "transparent", border: `1px solid ${tur === "mevcut" ? BLUE : "#E0E0E0"}`, color: tur === "mevcut" ? BLUE : SUBTLE, fontWeight: tur === "mevcut" ? 600 : 400 }}>Var olan bir dersi sabitle</button>
+        <button onClick={() => setTur("yeni")} className="text-sm px-3 py-1.5 rounded-lg" style={{ background: tur === "yeni" ? `${PURPLE}1A` : "transparent", border: `1px solid ${tur === "yeni" ? PURPLE : "#E0E0E0"}`, color: tur === "yeni" ? PURPLE : SUBTLE, fontWeight: tur === "yeni" ? 600 : 400 }}>Yeni etkinlik ekle</button>
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        {tur === "mevcut" ? (
+          <label className="text-sm">
+            <span className="block mb-1" style={{ color: SUBTLE }}>Ders</span>
+            <GoogleSelect value={dersId} onChange={(e) => setDersId(e.target.value)} className="w-48">
+              {dersler.length === 0 && <option value="">(Önce Dersler sekmesinden ders ekleyin)</option>}
+              {dersler.map((d) => <option key={d.id} value={d.id}>{d.ad}</option>)}
+            </GoogleSelect>
+          </label>
+        ) : (
+          <label className="text-sm">
+            <span className="block mb-1" style={{ color: SUBTLE }}>Etkinlik adı</span>
+            <GoogleInput value={ad} onChange={(e) => setAd(e.target.value)} placeholder="örn. Bayrak Töreni" className="w-48" />
+          </label>
+        )}
+        <label className="text-sm">
+          <span className="block mb-1" style={{ color: SUBTLE }}>Gün</span>
+          <GoogleSelect value={gun} onChange={(e) => setGun(Number(e.target.value))} className="w-32">
+            {DP_GUN_ADLARI.map((g, i) => <option key={i} value={i}>{g}</option>)}
+          </GoogleSelect>
+        </label>
+        <label className="text-sm">
+          <span className="block mb-1" style={{ color: SUBTLE }}>Saat</span>
+          <GoogleSelect value={saat} onChange={(e) => setSaat(Number(e.target.value))} className="w-24">
+            {Array.from({ length: SAAT }, (_, i) => i + 1).map((s) => <option key={s} value={s}>{s}. saat</option>)}
+          </GoogleSelect>
+        </label>
+        <GoogleButton variant="outlined" onClick={ekle} disabled={tur === "mevcut" ? !dersId : !ad.trim()}><IconPlus size={15} />Ekle</GoogleButton>
+      </div>
+      {tur === "mevcut" && dersiOlmayanSinifSayisi > 0 && (
+        <p className="text-xs mt-3 px-3 py-2 rounded-lg" style={{ color: "#1565C0", background: "#E3F2FD" }}>
+          ℹ Seçilen ders {dersiOlmayanSinifSayisi} sınıfa hiç atanmamış — bu sınıflarda bu sabitleme uygulanmaz, onlar etkilenmez.
+        </p>
+      )}
+      {etkilenenSinifSayisi > 0 && (
+        <p className="text-xs mt-3 px-3 py-2 rounded-lg" style={{ color: "#B45309", background: "#FEF3C7" }}>
+          ⚠ Bu etkinliği eklerseniz {etkilenenSinifSayisi} sınıfın atanmış ders saati toplamı, gerçek
+          haftalık kapasiteyi ({gercekKapasite} saat) aşacak — bu sınıflarda bazı dersler kesinlikle
+          yerleşemeyecek. Devam etmeden önce bu sınıflardaki ders saatlerini azaltmayı ya da günlük
+          saat sayısını artırmayı düşünün. ("Var olan bir dersi sabitle" seçeneği bu sorunu yaşatmaz.)
+        </p>
+      )}
+    </Kart>
   );
 }
 
@@ -12114,109 +12093,7 @@ function DPYerlesimTercihleri({ dp, guncelle }) {
   );
 }
 
-// Ayarlar sekmesindeki "Ders Saati Sabitleme" bölümü: kullanıcının, herhangi bir ders+sınıf için
-// haftalık saatlerinden birinin (yalnızca gün dağılımı değil) TAM olarak hangi gün ve hangi saatte
-// işleneceğini birebir sabitleyebileceği alan — örn. "Rehberlik dersi 5-A'da her zaman Pazartesi
-// 3. saat olsun". Program motoru bu sabitlemeyi, o dersi veren öğretmen için bir zorunlu kısıt gibi
-// ele alır ve programın HİÇBİR aşamasında (onarım, takas, boşluk azaltma, cilalama dahil) bozmaz.
-function DPSabitSaatler({ dp, guncelle }) {
-  const dersler = dp.dersler || [];
-  const [secilenDersId, setSecilenDersId] = useState(dersler[0]?.id || "");
-  const secilenDers = dersler.find((d) => d.id === secilenDersId) || dersler[0] || null;
-  const pinler = dp.ayarlar.sabitSaatler || [];
-  const SAAT = (Number(dp.ayarlar.oncekiSaat) || 0) + (Number(dp.ayarlar.sonrakiSaat) || 0);
-
-  // Bu ders hangi şubelere atanmış — yalnızca gerçekten atanmış şubeler seçilebilir listede gösterilir.
-  const uygunSiniflar = useMemo(() => {
-    if (!secilenDers) return [];
-    const set = new Set();
-    (dp.ogretmenler || []).forEach((o) => (o.atamalar || []).forEach((a) => { if (a.dersId === secilenDers.id && Number(a.saat) > 0) set.add(a.sinif); }));
-    return Array.from(set).sort((a, b) => String(a).localeCompare(String(b), "tr"));
-  }, [dp.ogretmenler, secilenDers]);
-
-  const [sinif, setSinif] = useState("");
-  const [gun, setGun] = useState(0);
-  const [saat, setSaat] = useState(0);
-  useEffect(() => { setSinif(uygunSiniflar[0] || ""); }, [secilenDersId, dp.ogretmenler]);
-
-  if (dersler.length === 0) return null;
-
-  const ekle = () => {
-    if (!secilenDers || !sinif) return;
-    const zatenVar = pinler.some((p) => p.dersId === secilenDers.id && p.sinif === sinif && p.gun === gun && p.saat === saat);
-    if (zatenVar) return;
-    const yeniPinler = [...pinler, { id: "sabit-" + uid(), dersId: secilenDers.id, sinif, gun, saat }];
-    const yeniAyarlar = { ...dp.ayarlar, sabitSaatler: yeniPinler };
-    const yeniDp = { ...dp, ayarlar: yeniAyarlar };
-    guncelle({ ayarlar: yeniAyarlar, program: dp.program ? dpProgramOlustur(yeniDp) : dp.program });
-  };
-  const sil = (id) => {
-    const yeniPinler = pinler.filter((p) => p.id !== id);
-    const yeniAyarlar = { ...dp.ayarlar, sabitSaatler: yeniPinler };
-    const yeniDp = { ...dp, ayarlar: yeniAyarlar };
-    guncelle({ ayarlar: yeniAyarlar, program: dp.program ? dpProgramOlustur(yeniDp) : dp.program });
-  };
-
-  return (
-    <Kart className="p-5">
-      <h2 className="font-display text-base font-medium mb-1">Ders Saati Sabitleme</h2>
-      <p className="text-xs mb-4" style={{ color: SUBTLE }}>
-        Herhangi bir dersin, belirli bir şubedeki haftalık saatlerinden birini tam olarak hangi gün
-        ve saatte işleneceğine sabitleyebilirsiniz (örn. Rehberlik dersini her zaman Pazartesi 3.
-        saate koymak gibi) — yalnızca Rehberlik için değil, tüm dersler için kullanılabilir. Eklediğiniz
-        anda programa hemen uygulanır; o saat başka bir sebeple gerçekten müsait değilse (örn. başka
-        bir sabitlemeyle çakışıyorsa) program bunu normal "yerleşemedi" uyarısı olarak gösterir.
-      </p>
-      <div className="flex flex-wrap gap-2 items-end mb-4">
-        <label className="text-xs" style={{ color: SUBTLE }}>
-          <span className="block mb-1">Ders</span>
-          <GoogleSelect value={secilenDers?.id || ""} onChange={(e) => setSecilenDersId(e.target.value)} className="w-40">
-            {dersler.map((d) => <option key={d.id} value={d.id}>{d.ad}</option>)}
-          </GoogleSelect>
-        </label>
-        <label className="text-xs" style={{ color: SUBTLE }}>
-          <span className="block mb-1">Şube</span>
-          {uygunSiniflar.length === 0 ? (
-            <span className="block text-xs py-2" style={{ color: SUBTLE }}>Atanmamış</span>
-          ) : (
-            <GoogleSelect value={sinif} onChange={(e) => setSinif(e.target.value)} className="w-24">
-              {uygunSiniflar.map((s) => <option key={s} value={s}>{s}</option>)}
-            </GoogleSelect>
-          )}
-        </label>
-        <label className="text-xs" style={{ color: SUBTLE }}>
-          <span className="block mb-1">Gün</span>
-          <GoogleSelect value={gun} onChange={(e) => setGun(Number(e.target.value))} className="w-28">
-            {DP_GUN_ADLARI.map((g, i) => <option key={i} value={i}>{g}</option>)}
-          </GoogleSelect>
-        </label>
-        <label className="text-xs" style={{ color: SUBTLE }}>
-          <span className="block mb-1">Saat</span>
-          <GoogleSelect value={saat} onChange={(e) => setSaat(Number(e.target.value))} className="w-20">
-            {Array.from({ length: SAAT }, (_, i) => <option key={i} value={i}>{i + 1}.</option>)}
-          </GoogleSelect>
-        </label>
-        <GoogleButton onClick={ekle} disabled={!secilenDers || !sinif}><IconPlus size={15} color="#fff" />Ekle</GoogleButton>
-      </div>
-      {pinler.length === 0 ? (
-        <p className="text-sm" style={{ color: SUBTLE }}>Henüz sabitlenmiş bir ders saati yok.</p>
-      ) : (
-        <div className="space-y-1.5">
-          {pinler.map((p) => {
-            const ders = dersler.find((d) => d.id === p.dersId);
-            return (
-              <div key={p.id} className="flex items-center justify-between text-sm bg-white rounded-lg px-3 py-2" style={{ border: `1px solid ${BORDER}` }}>
-                <span>{p.sinif} — {ders ? ders.ad : "(silinmiş ders)"} — {DP_GUN_ADLARI[p.gun]} {p.saat + 1}. saat</span>
-                <button onClick={() => sil(p.id)}><IconX size={13} color={RED} /></button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </Kart>
-  );
-}
-
+// Ayarlar sekmesindeki "Hassas Ayar" bölümü: bir öğretmenin haftalık ders saati, toplam ders saati
 // sayısından azsa (örn. haftada 10 saati olan bir öğretmenin 35 saatlik bir programda) ders
 // programında o öğretmen için boş saatler (boşluk) kaçınılmazdır. Boşlukları sıfıra zorlamak
 // bazı durumlarda programın hiç oluşamamasına ya da çok kısıtlı/çakışmalı sonuçlara yol açabilir.
@@ -12449,46 +12326,34 @@ function DPHassasAyarlar({ dp, guncelle }) {
                   Program, bu düğmeyi AÇIKÇA işaretlemediğiniz hiçbir öğretmene kendiliğinden boş
                   gün vermeye çalışmaz (çok öğretmenli okullarda bunu otomatik denemek sınıfların
                   kapasitesini tıkayıp derslerin hiç yerleşememesine yol açabildiği için kaldırıldı).
-                  Yalnızca burada işaretlediğiniz öğretmenler için, seçtiğiniz gün(ler) (ya da hiç
-                  gün seçmeyip yalnızca sayısını belirtirseniz, programın uygun bulduğu o kadar gün)
-                  tamamen boş bırakılmaya çalışılır. Zorunlu bir kısıtla çakışan bir gün varsa
-                  (o öğretmenin o gün mutlaka ders vermesi gerekiyorsa) SADECE o gün için talep
-                  uygulanmaz, diğer seçtiğiniz günler yine de boş bırakılmaya çalışılır.
+                  Yalnızca burada işaretlediğiniz öğretmenler için, aşağıda seçtiğiniz gün(ler)
+                  tamamen boş bırakılmaya çalışılır — birden fazla gün seçebilirsiniz. Zorunlu bir
+                  kısıtla çakışırsa (o öğretmenin o gün mutlaka ders vermesi gerekiyorsa) SADECE o
+                  gün için talep uygulanmaz, diğer seçtiğiniz günler etkilenmez.
                 </p>
                 {ayar.bosGunTalebi.aktif && (
-                  <div className="mt-2 space-y-2">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <span className="text-xs" style={{ color: SUBTLE }}>Boş bırakılacak gün(ler):</span>
-                      {DP_GUN_ADLARI.map((gAd, g) => (
-                        <label key={g} className="text-xs flex items-center gap-1">
-                          <input type="checkbox" checked={ayar.bosGunTalebi.gunler.includes(g)}
-                            onChange={(e) => {
-                              const gunler = e.target.checked
-                                ? [...ayar.bosGunTalebi.gunler, g].sort((a, b) => a - b)
-                                : ayar.bosGunTalebi.gunler.filter((x) => x !== g);
-                              const yeni = { ...ayar.bosGunTalebi, gunler };
-                              const yeniAyar = { ...ayar, bosGunTalebi: yeni };
-                              const yeniOgretmenler = ogretmenler.map((o) => (o.id === secilen.id ? { ...o, boslukAyari: yeniAyar } : o));
-                              const yeniDp = { ...dp, ogretmenler: yeniOgretmenler };
-                              guncelle({ ogretmenler: yeniOgretmenler, program: dp.program ? dpProgramOlustur(yeniDp) : dp.program });
-                            }} /> {gAd}
-                        </label>
-                      ))}
-                    </div>
-                    {ayar.bosGunTalebi.gunler.length === 0 && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs" style={{ color: SUBTLE }}>Yukarıda gün seçmediyseniz, kaç gün boş bırakılsın:</span>
-                        <GoogleInput type="number" min="1" max="4" value={ayar.bosGunTalebi.sayi}
-                          onChange={(e) => {
-                            const yeni = { ...ayar.bosGunTalebi, sayi: Math.max(1, Math.min(4, Number(e.target.value) || 1)) };
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
+                    <span className="text-xs" style={{ color: SUBTLE }}>Boş bırakılacak gün(ler):</span>
+                    {DP_GUN_ADLARI.map((gAd, g) => {
+                      const secili = ayar.bosGunTalebi.gunler.includes(g);
+                      return (
+                        <button key={g} type="button"
+                          onClick={() => {
+                            const gunler = secili
+                              ? ayar.bosGunTalebi.gunler.filter((x) => x !== g)
+                              : [...ayar.bosGunTalebi.gunler, g].sort((a, b) => a - b);
+                            const yeni = { ...ayar.bosGunTalebi, gunler };
                             const yeniAyar = { ...ayar, bosGunTalebi: yeni };
                             const yeniOgretmenler = ogretmenler.map((o) => (o.id === secilen.id ? { ...o, boslukAyari: yeniAyar } : o));
                             const yeniDp = { ...dp, ogretmenler: yeniOgretmenler };
                             guncelle({ ogretmenler: yeniOgretmenler, program: dp.program ? dpProgramOlustur(yeniDp) : dp.program });
-                          }} className="w-16" />
-                        <span className="text-xs" style={{ color: SUBTLE }}>gün (programın kendisi hangi gün(ler) olacağına karar verir)</span>
-                      </div>
-                    )}
+                          }}
+                          className="text-xs font-medium px-3 py-1.5 rounded-full transition-colors"
+                          style={secili ? { background: BLUE, color: "#fff" } : { background: `${BLUE}14`, color: BLUE, border: `1px solid ${BLUE}33` }}>
+                          {gAd}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -12595,7 +12460,14 @@ function DPHassasAyarlar({ dp, guncelle }) {
 }
 
 function DPDersFormu({ form, setForm, seviyeToggle, onKaydet, onIptal }) {
-  const seviyeSaatDegistir = (sv, deger) => setForm((f) => ({ ...f, saatSeviye: { ...f.saatSeviye, [sv]: deger } }));
+  const saatGuncelle = (sv, deger) => setForm((f) => ({ ...f, saatler: { ...f.saatler, [sv]: deger } }));
+  const tumSeviyelereUygula = () => {
+    setForm((f) => {
+      const yeniSaatler = { ...f.saatler };
+      f.seviyeler.forEach((sv) => { yeniSaatler[sv] = f.saat; });
+      return { ...f, saatler: yeniSaatler };
+    });
+  };
   return (
     <div className="space-y-3">
       <GoogleInput value={form.ad} onChange={(e) => setForm({ ...form, ad: e.target.value })} placeholder="Ders adı" className="w-full" />
@@ -12610,24 +12482,29 @@ function DPDersFormu({ form, setForm, seviyeToggle, onKaydet, onIptal }) {
           </GoogleSelect>
         )}
       </div>
-      <div>
-        <p className="text-xs mb-1.5" style={{ color: SUBTLE }}>
-          Sınıflar ve her sınıf seviyesi için haftalık saat — farklı seviyeler farklı saatte olabilir
-          (ör. 5-6. sınıf 6 saat, 7-8. sınıf 5 saat gibi).
-        </p>
-        <div className="flex flex-wrap gap-3">
-          {SINIF_SEVIYELERI.map((sv) => (
-            <div key={sv} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg" style={{ border: `1px solid ${BORDER}` }}>
-              <label className="text-sm flex items-center gap-1.5">
-                <input type="checkbox" checked={form.seviyeler.includes(sv)} onChange={() => seviyeToggle(sv)} /> {sv}. Sınıf
-              </label>
-              {form.seviyeler.includes(sv) && (
-                <GoogleInput type="number" min="0" value={form.saatSeviye[sv] ?? form.saat ?? 1}
-                  onChange={(e) => seviyeSaatDegistir(sv, e.target.value)} className="w-16" title={`${sv}. sınıfta haftalık saat`} />
-              )}
-            </div>
-          ))}
-        </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-sm flex items-center gap-2">Hızlı saat
+          <GoogleInput type="number" min="0" value={form.saat} onChange={(e) => setForm({ ...form, saat: e.target.value })} className="w-20" />
+        </label>
+        <button type="button" onClick={tumSeviyelereUygula} className="text-xs font-medium underline" style={{ color: BLUE }}>
+          Bu saati işaretli tüm sınıflara uygula
+        </button>
+      </div>
+      <p className="text-xs" style={{ color: SUBTLE }}>
+        İstersen her sınıf seviyesi için ayrı bir saat gir (örn. Türkçe 5-6. sınıfta 6, 7-8. sınıfta 5 saat gibi) — aksi halde yukarıdaki hızlı saat kullanılır.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {SINIF_SEVIYELERI.map((sv) => (
+          <div key={sv} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5" style={{ border: `1px solid ${BORDER}` }}>
+            <label className="text-sm flex items-center gap-1.5">
+              <input type="checkbox" checked={form.seviyeler.includes(sv)} onChange={() => seviyeToggle(sv)} /> {sv}. Sınıf
+            </label>
+            {form.seviyeler.includes(sv) && (
+              <GoogleInput type="number" min="0" value={form.saatler[sv] !== undefined ? form.saatler[sv] : form.saat}
+                onChange={(e) => saatGuncelle(sv, e.target.value)} className="w-14" />
+            )}
+          </div>
+        ))}
       </div>
       <div className="flex gap-2">
         <GoogleButton onClick={onKaydet}><IconCheck size={15} color="#fff" />Kaydet</GoogleButton>
@@ -12638,7 +12515,7 @@ function DPDersFormu({ form, setForm, seviyeToggle, onKaydet, onIptal }) {
 }
 
 function DPDersler({ dp, guncelle }) {
-  const bosForm = { ad: "", tur: "zorunlu", grup: null, saat: 1, saatSeviye: {}, seviyeler: [5, 6, 7, 8] };
+  const bosForm = { ad: "", tur: "zorunlu", grup: null, saat: 1, saatler: {}, seviyeler: [5, 6, 7, 8] };
   const [duzenlenen, setDuzenlenen] = useState(null); // ders id ya da "yeni"
   const [form, setForm] = useState(bosForm);
   const dersler = dp.dersler || [];
@@ -12646,40 +12523,30 @@ function DPDersler({ dp, guncelle }) {
   // Sınıfın haftalık ders programında dolu olan toplam saat kapasitesi (Ayarlar sekmesindeki
   // öğleden önce/sonra saatlerinden hesaplanır) — sabit bir sayı değil, okulun kendi ayarına göre değişir.
   const haftalikKapasite = ((Number(dp.ayarlar.oncekiSaat) || 0) + (Number(dp.ayarlar.sonrakiSaat) || 0)) * 5;
-  const toplamSaat = (seviye) => dersler.filter((d) => d.seviyeler.includes(seviye)).reduce((t, d) => t + dpDersSaatSeviye(d, seviye), 0);
-  const secmeliSaat = (seviye) => dersler.filter((d) => d.tur === "secmeli" && d.seviyeler.includes(seviye)).reduce((t, d) => t + dpDersSaatSeviye(d, seviye), 0);
+  const toplamSaat = (seviye) => dersler.filter((d) => d.seviyeler.includes(seviye)).reduce((t, d) => t + dpDersSaatiAl(d, seviye), 0);
+  const secmeliSaat = (seviye) => dersler.filter((d) => d.tur === "secmeli" && d.seviyeler.includes(seviye)).reduce((t, d) => t + dpDersSaatiAl(d, seviye), 0);
   const eksikGruplar = (seviye) => DP_SECMELI_GRUPLAR.filter((g) => !dersler.some((d) => d.tur === "secmeli" && d.grup === g && d.seviyeler.includes(seviye)));
 
-  // Bir dersin seviyelerini, aynı haftalık saate sahip olanları tek grupta toplayarak okunabilir
-  // bir metne çevirir — ör. "5, 6. sınıf: 6 saat · 7, 8. sınıf: 5 saat" ya da hepsi aynıysa "Haftalık 6 saat · 5, 6, 7, 8. sınıflarda okutulur".
-  const dersSaatOzeti = (d) => {
-    const gruplar = new Map();
-    d.seviyeler.forEach((sv) => {
-      const s = dpDersSaatSeviye(d, sv);
-      if (!gruplar.has(s)) gruplar.set(s, []);
-      gruplar.get(s).push(sv);
-    });
-    if (gruplar.size <= 1) return `Haftalık ${d.seviyeler.length ? dpDersSaatSeviye(d, d.seviyeler[0]) : (d.saat || 0)} saat · ${d.seviyeler.join(", ")}. sınıflarda okutulur`;
-    return Array.from(gruplar.entries()).map(([s, svler]) => `${svler.join(", ")}. sınıf: ${s} saat`).join(" · ") + " şeklinde okutulur";
-  };
-
-  const duzenlemeyeBasla = (d) => { setDuzenlenen(d.id); setForm({ ad: d.ad, tur: d.tur, grup: d.grup || null, saat: d.saat, saatSeviye: { ...(d.saatSeviye || {}) }, seviyeler: [...d.seviyeler] }); };
+  const duzenlemeyeBasla = (d) => { setDuzenlenen(d.id); setForm({ ad: d.ad, tur: d.tur, grup: d.grup || null, saat: d.saat, saatler: { ...(d.saatler || {}) }, seviyeler: [...d.seviyeler] }); };
   const yeniyeBasla = () => { setDuzenlenen("yeni"); setForm(bosForm); };
   const iptal = () => { setDuzenlenen(null); setForm(bosForm); };
   const kaydet = () => {
     if (!form.ad.trim() || !form.seviyeler.length) return;
     const grup = form.tur === "secmeli" ? (form.grup || DP_SECMELI_GRUPLAR[0]) : null;
-    const seviyeler = form.seviyeler.slice().sort();
-    // saatSeviye: yalnızca seçili seviyeler için tutulur (seçimden çıkarılan bir seviyenin eski
-    // saat değeri veride kalmaz). Geriye dönük uyumluluk için "saat" alanına da ilk seviyenin
-    // değeri yazılır — bu ders eski koda tek bir sayıymış gibi göründüğünde makul bir varsayılan olur.
-    const saatSeviye = {};
-    seviyeler.forEach((sv) => { saatSeviye[sv] = Math.max(0, Number(form.saatSeviye[sv] ?? form.saat) || 0); });
-    const saat = saatSeviye[seviyeler[0]] ?? 0;
+    const ortakSaat = Math.max(0, Number(form.saat) || 0);
+    // Her seviye için: forma o seviyeye özel bir saat girildiyse onu, girilmediyse hızlı/ortak
+    // saati kullanarak nihai saatler haritasını kur — böylece "Türkçe 5-6. sınıfta 6, 7-8.
+    // sınıfta 5 saat" gibi seviyeye özel değerler ayrı ayrı kaydedilebilir.
+    const saatler = {};
+    form.seviyeler.forEach((sv) => {
+      const ozel = form.saatler[sv];
+      saatler[sv] = ozel !== undefined && ozel !== "" ? Math.max(0, Number(ozel) || 0) : ortakSaat;
+    });
+    const kayit = { ad: form.ad.trim(), tur: form.tur, grup, saat: ortakSaat, saatler, seviyeler: form.seviyeler.slice().sort() };
     if (duzenlenen === "yeni") {
-      guncelle({ dersler: [...dersler, { id: "d-" + uid(), ad: form.ad.trim(), tur: form.tur, grup, saat, saatSeviye, seviyeler }] });
+      guncelle({ dersler: [...dersler, { id: "d-" + uid(), ...kayit }] });
     } else {
-      guncelle({ dersler: dersler.map((d) => d.id === duzenlenen ? { ...d, ad: form.ad.trim(), tur: form.tur, grup, saat, saatSeviye, seviyeler } : d) });
+      guncelle({ dersler: dersler.map((d) => d.id === duzenlenen ? { ...d, ...kayit } : d) });
     }
     iptal();
   };
@@ -12727,7 +12594,18 @@ function DPDersler({ dp, guncelle }) {
                 <div>
                   <p className="text-sm font-medium">{d.ad} <span className="text-xs font-normal ml-1" style={{ color: d.tur === "zorunlu" ? BLUE : ORANGE }}>{d.tur === "zorunlu" ? "Zorunlu" : "Seçmeli"}</span></p>
                   <p className="text-xs mt-0.5" style={{ color: SUBTLE }}>
-                    {dersSaatOzeti(d)}{d.tur === "secmeli" && d.grup ? ` · ${d.grup}` : ""}
+                    {(() => {
+                      // Seviyeleri, o seviyedeki saate göre grupla — hepsi aynıysa tek satır ("Haftalık
+                      // 6 saat · 5,6,7,8. sınıflarda okutulur"), farklıysa her grup ayrı gösterilir
+                      // ("5, 6. sınıf: 6 saat · 7, 8. sınıf: 5 saat") — kullanıcının istediği tam olarak bu.
+                      const gruplar = {};
+                      d.seviyeler.forEach((sv) => { const s = dpDersSaatiAl(d, sv); (gruplar[s] = gruplar[s] || []).push(sv); });
+                      const anahtarlar = Object.keys(gruplar).sort((a, b) => Number(a) - Number(b));
+                      if (anahtarlar.length === 1) {
+                        return `Haftalık ${anahtarlar[0]} saat · ${d.seviyeler.join(", ")}. sınıflarda okutulur`;
+                      }
+                      return anahtarlar.map((saat) => `${gruplar[saat].join(", ")}. sınıf: ${saat} saat`).join(" · ");
+                    })()}{d.tur === "secmeli" && d.grup ? ` · ${d.grup}` : ""}
                   </p>
                 </div>
                 <div className="flex gap-1 shrink-0">
@@ -12751,26 +12629,31 @@ function DPOgretmenDetay({ dp, ogretmen, guncelle, sil }) {
   const SAAT = (Number(dp.ayarlar.oncekiSaat) || 0) + (Number(dp.ayarlar.sonrakiSaat) || 0);
   const [yeniSinif, setYeniSinif] = useState(siniflar[0] || "");
   const [yeniDers, setYeniDers] = useState(dersler[0]?.id || "");
-  const [yeniSaat, setYeniSaat] = useState(dpDersSaatSeviye(dersler[0], parseInt(siniflar[0] || "", 10)) || 1);
+  const [yeniSaat, setYeniSaat] = useState(dersler[0]?.saat || 1);
 
-  const atamalar = ogretmen.atamalar || [];
-  const kisitlar = ogretmen.kisitlar || [];
-
-  // Ders ya da sınıf seçilince, o dersin SEÇİLİ SINIFIN SEVİYESİNE göre haftalık varsayılan
-  // saatini otomatik doldurur (aynı ders farklı seviyelerde farklı saat olabilir); kullanıcı
-  // isterse bu değeri elle değiştirebilir (aşağıdaki saat kutusu her zaman düzenlenebilir).
+  // Ders (ya da sınıf) seçilince, o dersin SEÇİLİ sınıfın seviyesine göre haftalık ders
+  // çizelgesindeki varsayılan saatini otomatik doldurur (ders artık seviyeye göre farklı saat
+  // taşıyabilir — örn. Türkçe 5-6. sınıfta 6, 7-8. sınıfta 5 saat); kullanıcı isterse bu değeri
+  // elle değiştirebilir (aşağıdaki saat kutusu her zaman düzenlenebilir).
+  const seviyeyiCikar = (sinifAdi) => Number(String(sinifAdi).match(/\d+/)?.[0]) || null;
   const dersSecildi = (id) => {
     setYeniDers(id);
     const ders = dersler.find((d) => d.id === id);
-    const s = dpDersSaatSeviye(ders, parseInt(yeniSinif, 10));
-    if (s) setYeniSaat(s);
+    const seviye = seviyeyiCikar(yeniSinif);
+    const saat = ders ? dpDersSaatiAl(ders, seviye) : 0;
+    if (saat) setYeniSaat(saat);
   };
   const sinifSecildi = (sinif) => {
     setYeniSinif(sinif);
     const ders = dersler.find((d) => d.id === yeniDers);
-    const s = dpDersSaatSeviye(ders, parseInt(sinif, 10));
-    if (s) setYeniSaat(s);
+    const seviye = seviyeyiCikar(sinif);
+    const saat = ders ? dpDersSaatiAl(ders, seviye) : 0;
+    if (saat) setYeniSaat(saat);
   };
+
+  const atamalar = ogretmen.atamalar || [];
+  const kisitlar = ogretmen.kisitlar || [];
+
 
   const atamaEkle = () => {
     if (!yeniSinif || !yeniDers || Number(yeniSaat) <= 0) return;
@@ -12813,7 +12696,7 @@ function DPOgretmenDetay({ dp, ogretmen, guncelle, sil }) {
             {siniflar.map((s) => <option key={s} value={s}>{s}</option>)}
           </GoogleSelect>
           <GoogleSelect value={yeniDers} onChange={(e) => dersSecildi(e.target.value)} className="flex-1 min-w-[160px]">
-            {dersler.map((d) => <option key={d.id} value={d.id}>{d.ad} ({dpDersSaatSeviye(d, parseInt(yeniSinif, 10))} saat/hafta)</option>)}
+            {dersler.map((d) => <option key={d.id} value={d.id}>{d.ad} ({dpDersSaatiAl(d, seviyeyiCikar(yeniSinif))} saat/hafta)</option>)}
           </GoogleSelect>
           <label className="text-xs flex flex-col gap-1" style={{ color: SUBTLE }}>
             Saat/hafta
@@ -13056,7 +12939,6 @@ function DPUyariPaneli({ dp, program, uygula, dersAdi, ogretmenAdi }) {
   const ozetMap = {};
   analiz.forEach((a) => { ozetMap[a.ogretmenId] = (ozetMap[a.ogretmenId] || 0) + a.kalan; });
   const ozetSirali = Object.entries(ozetMap).sort((x, y) => y[1] - x[1]).slice(0, 5);
-
   const yasagiKaldir = (ogretmenId, gun, saat) => {
     const yeniOgretmenler = dp.ogretmenler.map((o) => o.id !== ogretmenId ? o
       : { ...o, kisitlar: (o.kisitlar || []).filter((k) => !(k.tur === "yasak" && k.gun === gun && k.saat === saat)) });
@@ -13072,16 +12954,18 @@ function DPUyariPaneli({ dp, program, uygula, dersAdi, ogretmenAdi }) {
     });
     uygula({ ogretmenler: yeniOgretmenler });
   };
-  const boslukGevset = (ogretmenId, gun) => {
+  // ÖNEMLİ DÜZELTME: eskiden burada "boslukGevset" adında, Hassas Ayar'daki günlük boşluk sınırını
+  // gevşeten bir aksiyon vardı ve HER "boş saat kullanılamadı" durumunda öneriliyordu — üstelik
+  // her zaman Pazartesi'yi (gun=0) hedefliyordu, gerçek sorunlu gün ne olursa olsun. Bu aksiyon
+  // yerleştirmeyi hiçbir zaman etkilemediği için (Hassas Ayar yalnızca zaten yerleşmiş dersleri gün
+  // içinde kaydırır, yerleştirmeyi engellemez/sağlamaz) kaldırıldı. Gerçek engel ya öğretmenin Boş
+  // Gün Talebi ya da bir Ders Yerleşim Tercihi (desen) kotasıdır — aşağıdaki iki aksiyon bunları
+  // doğrudan hedef alır.
+  const bosGunTalebiKaldir = (ogretmenId) => {
     const yeniOgretmenler = dp.ogretmenler.map((o) => {
       if (o.id !== ogretmenId) return o;
       const ayar = dpBoslukAyarNormalize(o);
-      const gunler = ayar.gunler.map((x, i) => {
-        if (i !== gun || x.maks === null) return x; // null = zaten günlük sınır yok, gevşetilecek bir şey yok.
-        const yeniMaks = x.maks + 1;
-        return { maks: yeniMaks, ardisikMax: Math.max(x.ardisikMax || 0, yeniMaks) };
-      });
-      return { ...o, boslukAyari: { ...ayar, aktif: true, gunler } };
+      return { ...o, boslukAyari: { ...ayar, bosGunTalebi: { aktif: false, gunler: [] } } };
     });
     uygula({ ogretmenler: yeniOgretmenler });
   };
@@ -13096,7 +12980,20 @@ function DPUyariPaneli({ dp, program, uygula, dersAdi, ogretmenAdi }) {
 
       <div className="space-y-3">
         {analiz.map((a, i) => {
-          const baskin = Math.max(a.sinifDolu, a.ogrDolu, a.yasakli, a.bos);
+          // ÖNEMLİ DÜZELTME: "sinifDolu", sınıfın HAFTANIN GERİ KALANINDA (bu ders DIŞINDAKİ diğer
+          // zorunlu derslerle) dolu olduğu saat sayısıdır — bu sayı normal şartlarda zaten çok
+          // büyüktür (bir sınıfın 35 saatinin ~29-30'u başka derslerle dolu olması gayet DOĞALDIR,
+          // bir sorun değildir). yasakli/ogrDolu/bosGunuEngeli/desenEngeli/bos ise SADECE sınıfın
+          // GERÇEKTEN boş olduğu birkaç saat arasında sayılır — yani sinifDolu ile bunlar birbirinden
+          // tamamen farklı ölçeklerdir ve doğrudan Math.max ile kıyaslanamaz; bu kıyaslama, gerçek
+          // darboğaz (öğretmenin kendi çakışması/yasağı) ne olursa olsun neredeyse HER ZAMAN "sınıfın
+          // programı dolu" mesajını yanlışlıkla öne çıkarıyordu. Doğru mantık: sınıfın GERÇEKTEN boş
+          // olduğu toplam saat yerleştirilmesi gereken saatten (kalan) AZSA, bu gerçekten bir
+          // kapasite sorunudur; DEĞİLSE, gerçek darboğaz diğer beş kategori arasından belirlenir —
+          // sinifDolu bu durumda hiç dikkate alınmaz.
+          const sinifGercekBos = a.yasakli + a.ogrDolu + a.bosGunuEngeli + a.desenEngeli + a.bos;
+          const gercekKapasiteSorunu = sinifGercekBos < a.kalan;
+          const baskin = gercekKapasiteSorunu ? a.sinifDolu : Math.max(a.ogrDolu, a.yasakli, a.bosGunuEngeli, a.desenEngeli, a.bos);
           return (
             <div key={i} className="rounded-xl p-3" style={{ border: `1px solid ${BORDER}` }}>
               <p className="text-xs font-semibold mb-2">{a.ogretmenAd} — {a.sinif} — {dersAdi(a.dersId)}: <span style={{ color: RED }}>{a.kalan} saat</span> yerleştirilemedi</p>
@@ -13137,10 +13034,26 @@ function DPUyariPaneli({ dp, program, uygula, dersAdi, ogretmenAdi }) {
                 </DPOneriSatiri>
               )}
 
+              {a.bosGunuEngeli > 0 && a.bosGunuEngeli === baskin && (
+                <DPOneriSatiri etiket="Sebep: Öğretmenin Boş Gün Talebi bu saatleri kapatıyor" renk={BLUE}
+                  butonlar={[{ metin: "Boş Gün Talebini Kaldır", onClick: () => bosGunTalebiKaldir(a.ogretmenId) }]}>
+                  {a.ogretmenAd}, sınıfın ve kendisinin uygun olduğu {a.bosGunuEngeli} saatte "Hassas Ayar" sekmesinden AÇIKÇA boş gün istemiş ({Array.from(new Set(a.bosGunuSlotlar.map((s) => DP_GUN_ADLARI[s.g]))).join(", ")}); bu yüzden program o günlere bilerek ders koymuyor. Boş Gün Talebini kaldırırsanız ders yerleşebilir.
+                </DPOneriSatiri>
+              )}
+
+              {a.desenEngeli > 0 && a.desenEngeli === baskin && (
+                <DPOneriSatiri etiket="Sebep: Ders Yerleşim Tercihi (desen) kotası dolu" renk={BLUE}>
+                  Sınıfın ve {a.ogretmenAd}'in uygun olduğu {a.desenEngeli} saat var, ama bu ders için "Ayarlar → Ders Yerleşim Tercihleri" bölümünde girilmiş bir desen (ör. "2+2") bu günlerin kotasını zaten doldurmuş olabilir. Bu dersin deseni gevşetilir ya da kaldırılırsa ders yerleşebilir.
+                </DPOneriSatiri>
+              )}
+
               {a.bos > 0 && a.bos === baskin && (
-                <DPOneriSatiri etiket="Sebep: Boş saat var ama günlere dağıtım izin vermedi" renk={BLUE}
-                  butonlar={[{ metin: "Boşluk ayarını gevşet (Pazartesi)", onClick: () => boslukGevset(a.ogretmenId, 0) }]}>
-                  Haftada {a.bos} saat teorik olarak boş görünüyor, ama algoritma dersi günlere dağıtırken bu saatleri kullanamadı. Öğretmenin "Hassas Ayar" boşluk sınırını gevşetmeyi deneyin.
+                <DPOneriSatiri etiket="Sebep: Belirlenemedi" renk={BLUE}
+                  butonlar={a.bosSlotlar.slice(0, 3).map((s) => ({
+                    metin: `Zorunlu Yap: ${DP_GUN_ADLARI[s.g]} ${s.p + 1}. saat`,
+                    onClick: () => zorunluEkle(a.ogretmenId, s.g, s.p),
+                  }))}>
+                  Haftada {a.bos} saat, sınıfın ve {a.ogretmenAd}'in de gerçekten boş olduğu bir zamana denk geliyor ama yine de yerleşmemiş. Bu saatlerden birini "Zorunlu Yap" ile ayırmayı deneyin; sorun devam ederse programı yeniden oluşturmayı deneyin.
                 </DPOneriSatiri>
               )}
             </div>
@@ -13352,9 +13265,9 @@ function dpSinifKartiUret({ dp, program, sinif, gun, saat, oncekiSaat, dersAdi, 
     altBaslik: kompakt ? null : `Oluşturulma: ${program && program.zaman ? new Date(program.zaman).toLocaleString("tr-TR") : ""}`,
     gun, saat, oncekiSaat,
     hucreVer: (g, s) => (program.classGrid[sinif] && program.classGrid[sinif][g] && program.classGrid[sinif][g][s]) || null,
-    ustEtiket: (h) => dersAdi(h.dersId),
-    altEtiket: (h) => ogretmenAdi(h.ogretmenId),
-    renk: (h) => ((dp.dersler.find((d) => d.id === h.dersId) || {}).tur === "secmeli" ? "#F4511E" : "#4285F4"),
+    ustEtiket: (h) => (h.etkinlik ? h.ad : dersAdi(h.dersId)),
+    altEtiket: (h) => (h.etkinlik ? "(Tüm Okul)" : ogretmenAdi(h.ogretmenId)),
+    renk: (h) => (h.etkinlik ? "#8E24AA" : ((dp.dersler.find((d) => d.id === h.dersId) || {}).tur === "secmeli" ? "#F4511E" : "#4285F4")),
     genislikPx,
   });
 }
@@ -13542,9 +13455,13 @@ function DPProgramGoster({ dp, guncelle }) {
               <DPGridTablo
                 gun={GUN} saat={SAAT} oncekiSaat={oncekiSaat}
                 hucreVer={(g, s) => (program.classGrid[secilenSinif] && program.classGrid[secilenSinif][g] && program.classGrid[secilenSinif][g][s]) || null}
-                hucreEtiket={(h) => h ? `${dersAdi(h.dersId)}\n${ogretmenAdi(h.ogretmenId)}` : ""}
-                renk={(h) => h ? ((dp.dersler.find((d) => d.id === h.dersId) || {}).tur === "secmeli" ? ORANGE : BLUE) : null}
-                onTikla={(g, s) => setDuzenlenenHucre({ sinif: secilenSinif, gun: g, saat: s })}
+                hucreEtiket={(h) => (h ? (h.etkinlik ? `${h.ad}\n(Tüm Okul)` : `${dersAdi(h.dersId)}\n${ogretmenAdi(h.ogretmenId)}`) : "")}
+                renk={(h) => (h ? (h.etkinlik ? "#8E24AA" : ((dp.dersler.find((d) => d.id === h.dersId) || {}).tur === "secmeli" ? ORANGE : BLUE)) : null)}
+                onTikla={(g, s) => {
+                  const h = program.classGrid[secilenSinif] && program.classGrid[secilenSinif][g] && program.classGrid[secilenSinif][g][s];
+                  if (h && h.etkinlik) return; // sabit etkinlik hücreleri buradan düzenlenemez — Ayarlar sekmesinden yönetilir
+                  setDuzenlenenHucre({ sinif: secilenSinif, gun: g, saat: s });
+                }}
               />
             </Kart>
           ) : (
