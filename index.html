@@ -2442,6 +2442,12 @@ function GirisEkrani({ onGiris }) {
     }
 
     // 2) Program Sahibi'nin oluşturduğu Ana Kullanıcı şifrelerinden biri (ör. "Sait Çelik")
+    // GÜVENLİK: Ana Kullanıcı (yönetici) güvenlik eşleştirme listesi eksik/eskiyse otomatik tazelenir.
+    try {
+      const anaHarita = {};
+      anaKullaniciListesi.forEach((a) => { if (a && a.sifre) anaHarita[String(a.sifre).trim().toUpperCase()] = a.id; });
+      await db.ref(yonetimYoluAl() + "/_anaSifreId").set(anaHarita);
+    } catch (e) { console.error("Yönetici güvenlik haritası tazelenemedi:", e); }
     const anaEslesme = anaKullaniciListesi.find((a) => a.sifre && deger.toUpperCase() === String(a.sifre).trim().toUpperCase());
     if (anaEslesme) {
       VERI_KOK = tenantYoluAl(anaEslesme.id);
@@ -2479,6 +2485,26 @@ function GirisEkrani({ onGiris }) {
           db.ref(kok + "/students").once("value"),
           db.ref(kok + "/veliSifreOnek").once("value"),
         ]);
+        // GÜVENLİK: bu Ana Kullanıcının güvenlik eşleştirme listeleri (öğretmen/veli şifre
+        // haritaları) bir sebeple eksik ya da eskiyse (örn. bu güncellemeden önce girilmiş
+        // veriler), giriş denemesi sırasında sessizce ve otomatik olarak tazelenir. Böylece
+        // hiçbir öğretmen/veli, elle bir işlem yapılmadığı için giriş yapamaz duruma düşmez.
+        try {
+          const tenantOnekIcin = onekSnap.val() || veliOnekVarsayilaniHesapla(ana.id);
+          const ogrHarita = {};
+          (ogretmenSnap.val() || []).forEach((o) => { if (o && o.sifre && o.id) ogrHarita[String(o.sifre).trim().toUpperCase()] = o.id; });
+          const noHarita = {};
+          (ogrenciSnap.val() || []).forEach((s) => {
+            if (s && s.no && String(s.no) !== "0" && s.id) {
+              const onek = veliOnekAl(s, tenantOnekIcin);
+              noHarita[String(s.no)] = { id: s.id, sifre: `${onek}${s.no}` };
+            }
+          });
+          await Promise.all([
+            db.ref(kok + "/_ogretmenSifreId").set(ogrHarita),
+            db.ref(kok + "/_ogrenciNoId").set(noHarita),
+          ]);
+        } catch (e) { console.error("Güvenlik haritaları tazelenemedi:", e); }
         const ogretmenKaydi = ogretmenSifresindenBul(deger, ogretmenSnap.val() || []);
         if (ogretmenKaydi) {
           VERI_KOK = kok;
