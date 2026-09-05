@@ -116,6 +116,7 @@ const IconCamera = mkIcon(<><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 
 const IconDownload = mkIcon(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>);
 const IconFileUp = mkIcon(<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9.5 14.5 12 12 14.5 14.5"/></>);
 const IconNote = mkIcon(<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></>);
+const IconMic = mkIcon(<><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></>);
 const IconSparkles = mkIcon(<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>);
 function IconWhatsapp({ size = 16, color = "#fff", style = {} }) {
   return (
@@ -185,6 +186,132 @@ const DERSLER = ["Türkçe", "Sosyal Bilgiler", "Din Kültürü ve Ahlak Bilgisi
 const NOT_TURLERI = ["1. Sınav", "2. Sınav", "1. Sözlü", "2. Sözlü"];
 const DERS_SORU = { "Türkçe": 20, "Sosyal Bilgiler": 10, "Din Kültürü ve Ahlak Bilgisi": 10, "İngilizce": 10, "Matematik": 20, "Fen Bilimleri": 20 };
 const TOPLAM_SORU = Object.values(DERS_SORU).reduce((a, b) => a + b, 0);
+// Bir sınıf adının başındaki sayıyı (sınıf seviyesini) çıkarır (ör. "9-A" -> "9"). Bir denemenin
+// hangi sınıf seviyesi için hangi ders/soru ayarına sahip olduğunu bulmakta kullanılır (bkz.
+// denemeDersBilgisi ve DenemeIceAktar'daki "Sınıf Seviyesi" seçimi).
+function sinifSeviyesiCikar(sinifAdi) {
+  const m = String(sinifAdi || "").match(/^(\d+)/);
+  return m ? m[1] : "";
+}
+// Öğrenci adlarını karşılaştırılabilir hale getirir (büyük/küçük harf, fazla boşluk, nokta gibi
+// farklılıkları yok sayar) — PDF'ten okunan bir satırı, okul numarası eşleşmediğinde/okunamadığında
+// AD/SOYAD üzerinden sistemdeki kayıtlı bir öğrenciyle eşleştirebilmek için kullanılır (bkz. adHaritasi,
+// ogrenciEslestir). Türkçe büyütme kuralları ("i" -> "İ" gibi) kasıtlı olarak kullanılır.
+function adNormallestir(ad) {
+  return String(ad || "").toLocaleUpperCase("tr-TR").replace(/[.]/g, "").replace(/\s+/g, " ").trim();
+}
+// İki dize arasındaki düzenleme (Levenshtein) mesafesini hesaplar — "SEMANUR" ile "SEMA" gibi aynı
+// öğrencinin farklı denemelerde farklı yazılmış (kısaltılmış/eksik yazılmış) adlarını yakalayabilmek
+// için adBenzerMi tarafından kullanılır.
+function levenshteinMesafe(a, b) {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let onceki = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const gecici = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? onceki : 1 + Math.min(onceki, dp[j], dp[j - 1]);
+      onceki = gecici;
+    }
+  }
+  return dp[n];
+}
+// İki "ad" (soyad hariç, tek veya çok kelimeli ön ad) parçasının aynı kişiye ait sayılıp
+// sayılamayacağına karar verir. Biri diğerinin baş kısmıysa (ör. "SEMA" / "SEMANUR" — kısaltılmış/takma
+// ad ihtimali) ya da aralarındaki yazım farkı (Levenshtein mesafesi) kelimenin uzunluğuna göre KÜÇÜKse
+// (ör. tek harflik bir yazım hatası) benzer sayılır. Bu, ogrenciEslestir içinde SADECE soyadı da TAM
+// eşleşen ve okuldaki başka hiçbir öğrenciyle çakışmayan (yani sonucun tek/kesin olduğu) durumlarda
+// kullanılır — o yüzden burada nispeten gevşek bir eşik güvenlidir.
+function adBenzerMi(a, b) {
+  if (!a || !b) return a === b;
+  if (a === b) return true;
+  if (a.length >= 3 && b.length >= 3 && (a.startsWith(b) || b.startsWith(a))) return true;
+  const mesafe = levenshteinMesafe(a, b);
+  const esik = Math.max(1, Math.floor(Math.min(a.length, b.length) * 0.34));
+  return mesafe <= esik;
+}
+// Okul numaralarını karşılaştırılabilir hale getirir: baştaki sıfırları atar (ör. "00247" ve "247"
+// aynı sayı sayılır). Aynı öğrenci bazen elle ("247"), bazen PDF/Excel içe aktarımıyla ("00247", raporun
+// standart 5 haneli biçimiyle) sisteme girmiş olabilir — bu ikisi salt METİN olarak karşılaştırılırsa
+// (eski davranış) FARKLI sayılıp eşleşme atlanır, oysa öğretmen için ikisi de aynı öğrenci numarasıdır.
+// Tamamı sıfırlardan oluşan ("000" gibi) ya da boş bir değer "0"a indirgenir (numarasızlıkla aynı
+// muamele görsün diye — bkz. noHaritasi'ndeki "s.no !== '0'" kontrolü).
+function noNormallestir(no) {
+  const ham = String(no || "").trim();
+  const atilmis = ham.replace(/^0+/, "");
+  return atilmis === "" ? "0" : atilmis;
+}
+// Anasayfa'daki "Sesle Kayıt" özelliği: öğretmenin söylediği bir cümleyi ("Ahmet Demir matematik soru
+// çözümü gerçekleştirdi, koçluğa gir" gibi) ayrıştırıp bir TASLAK kayıt nesnesi üretir. Bu SADECE bir
+// TAHMİNDİR — hiçbir alan öğretmen onay ekranında görüp gerekirse düzeltmeden kaydedilmez (bkz.
+// SesleKayitPaneli). Yanlış tahmin güvenlik açığı değildir çünkü hiçbir şey otomatik kaydolmaz.
+function sesKomutunuAyristir(metin, students, kocluklOgrenciler) {
+  const duz = (metin || "").trim();
+  const kucuk = duz.toLocaleLowerCase("tr-TR");
+
+  // 1) Hedef bölüm tespiti — "koçluk" kelimesi geçiyorsa koçluğun alt alanlarından biri, geçmiyorsa
+  // (ya da anlaşılamıyorsa) varsayılan olarak Davranış Notu kabul edilir.
+  const kocluklGeciyor = /ko[cç]luk/.test(kucuk);
+  let hedef = "davranis";
+  if (kocluklGeciyor && /(devam|yoklama|geldi|gelmedi)/.test(kucuk)) hedef = "devam";
+  else if (kocluklGeciyor && /kitap/.test(kucuk)) hedef = "kitap";
+  else if (/soru\s*[cç]öz|soru\s*yap/.test(kucuk)) hedef = "soru";
+  else if (kocluklGeciyor) hedef = "not";
+
+  // 2) Durum (artı/eksi) tespiti — hem "yaptı" hem "yapmadı" kalıplarını ayırt edebilmek için önce
+  // olumsuz (eksi) kalıplar aranır.
+  const eksiKaliplari = /(yapmadı|yapmadi|gerçekleştirmedi|gerceklestirmedi|tamamlamadı|tamamlamadi|gelmedi|getirmedi|çözmedi|cozmedi|bitirmedi|halletmedi)/;
+  const artiKaliplari = /(yaptı|yapti|gerçekleştirdi|gerceklestirdi|tamamladı|tamamladi|geldi|getirdi|çözdü|cozdu|bitirdi|halletti)/;
+  let durum = null;
+  if (eksiKaliplari.test(kucuk)) durum = "eksi";
+  else if (artiKaliplari.test(kucuk)) durum = "arti";
+
+  // 3) Ders tespiti (sadece "soru" hedefinde kullanılır) — DERSLER listesindeki adların geçip
+  // geçmediğine bakılır.
+  let ders = DERSLER.find((d) => kucuk.includes(d.toLocaleLowerCase("tr-TR"))) || null;
+  if (!ders && /matematik/.test(kucuk)) ders = "Matematik";
+  if (!ders && /\bfen\b/.test(kucuk)) ders = "Fen Bilimleri";
+  if (!ders && /sosyal/.test(kucuk)) ders = "Sosyal Bilgiler";
+  if (!ders && /\bdin\b/.test(kucuk)) ders = "Din Kültürü ve Ahlak Bilgisi";
+  if (!ders && /ingilizce/.test(kucuk)) ders = "İngilizce";
+  if (!ders && /türkçe|turkce/.test(kucuk)) ders = "Türkçe";
+
+  // 4) Öğrenci tespiti — hedefin ait olduğu doğru öğrenci havuzunda (Davranış → ana öğrenci listesi,
+  // Koçluk → koçluğun kendi öğrenci listesi) 3, 2 ve 1 kelimelik ardışık pencereler denenir; en uzun
+  // eşleşen pencere kazanır (ör. "Elif Ada Işık" iki kelimelik "Ada Işık"tan daha güçlü bir sinyaldir).
+  const havuz = (hedef === "davranis" ? students : kocluklOgrenciler) || [];
+  const kelimeler = duz.split(/\s+/).filter(Boolean);
+  let enIyi = null, enIyiUzunluk = 0;
+  for (let uzunluk = 3; uzunluk >= 1 && !enIyi; uzunluk--) {
+    for (let i = 0; i + uzunluk <= kelimeler.length; i++) {
+      const aday = adNormallestir(kelimeler.slice(i, i + uzunluk).join(" "));
+      if (!aday) continue;
+      const eslesen = havuz.find((o) => adNormallestir(o.ad) === aday) ||
+        (uzunluk >= 2 ? havuz.find((o) => adBenzerMi(adNormallestir(o.ad), aday)) : null);
+      if (eslesen) { enIyi = eslesen; enIyiUzunluk = uzunluk; break; }
+    }
+  }
+
+  return { hedef, ogrenciId: enIyi ? enIyi.id : "", ders, durum, metin: duz };
+}
+// Bir deneme kaydı (denemeler dizisindeki eleman), verilen sınıf seviyesi için hangi dersleri
+// ve her dersten kaç soru sorulduğunu döndürür. Deneme bu seviye için "Ders Ayarları" ekranından
+// ÖZEL olarak ayarlanmışsa (deneme.dersAyarlari[seviye]) o kullanılır — ör. 9. sınıflarda "Türkçe"
+// yerine "Edebiyat" dersi ya da 5. sınıflarda Türkçe'den 20 yerine 15 soru gibi okula özgü
+// farklılıklar böylece PDF/Excel içe aktarımında doğru okunur. Özel bir ayar yoksa (eski/ayarlanmamış
+// denemeler dahil), sistemin standart LGS ders/soru listesine (DERSLER/DERS_SORU) geri döner —
+// böylece bu özellik eklenmeden önce oluşturulmuş denemeler öncekiyle birebir aynı çalışmaya devam eder.
+function denemeDersBilgisi(deneme, seviye) {
+  const ozel = deneme && deneme.dersAyarlari ? deneme.dersAyarlari[String(seviye)] : null;
+  if (ozel && Array.isArray(ozel.dersler) && ozel.dersler.length) {
+    return { dersler: ozel.dersler, dersSoru: ozel.dersSoru || {} };
+  }
+  return { dersler: DERSLER, dersSoru: DERS_SORU };
+}
 const netHesapla = (dogru, yanlis) => dogru - yanlis / 3;
 // Bir dersin doğru/yanlış kaydından net hesaplar; kayıt yoksa null döner (bkz. aşağıdaki not).
 const dersSonucuNeti = (kayit) => (kayit ? netHesapla(Number(kayit.dogru) || 0, Number(kayit.yanlis) || 0) : null);
@@ -259,10 +386,10 @@ const denemeVerileriniBirlestir = (ds2, de2, kalanId, silinecekId) => {
 // için okunabilir bir uyarı metni döndürülür; çağıran kod bunu görüp satırı otomatik kaydetmeye
 // KAPATIR — aksi halde ör. 90 soruluk bir denemeden 100 net gibi imkânsız sonuçlar sessizce
 // kaydedilebiliyordu.
-function dersSonucDogrula(dersSonuc) {
+function dersSonucDogrula(dersSonuc, dersSoru = DERS_SORU) {
   const mesajlar = [];
   Object.entries(dersSonuc || {}).forEach(([ders, kayit]) => {
-    const soru = DERS_SORU[ders];
+    const soru = dersSoru[ders];
     if (!soru || !kayit) return;
     const d = Number(kayit.dogru) || 0, y = Number(kayit.yanlis) || 0;
     if (d < 0 || y < 0 || d + y > soru) mesajlar.push(`${ders} ${d}D/${y}Y (maks ${soru})`);
@@ -2227,6 +2354,7 @@ const ISLEM_ETIKETLERI = {
   davranisNotlari: "Davranış notları",
   kocluklSiniflar: "Koçluk sınıfları",
   kocluklOgrenciler: "Koçluk öğrencileri",
+  koclukNotlari: "Koçluk notları",
   ogretmenSifreleri: "Öğretmen şifreleri",
   dersProgrami: "Ders programı",
   sinifTemizligi: "Sınıf temizliği",
@@ -2330,7 +2458,7 @@ const SAIT_CELIK_ANA_KULLANICI_ADI = "Sait Çelik";
 const LEGACY_VERI_ANAHTARLARI = [
   "students", "attendance", "attendanceMeta", "dersYoklama", "otoAyar", "otoGecmis",
   "grades", "denemeSonuclari", "denemeler", "denemeEkBilgi", "soruCozum", "kitapKontrol",
-  "kocDevam", "davranisUyarilari", "davranisNotlari", "kocluklSiniflar", "kocluklOgrenciler", "ogretmenSifreleri",
+  "kocDevam", "davranisUyarilari", "davranisNotlari", "kocluklSiniflar", "kocluklOgrenciler", "koclukNotlari", "ogretmenSifreleri",
   "girisGecmisi",
 ];
 // Gömülü gerçek veriden tam bir başlangıç veri paketi üretir (students, denemeler, tüm sonuçlar).
@@ -2371,6 +2499,7 @@ function gomuluGercekVeriyiOlustur() {
     davranisNotlari: {},
     kocluklSiniflar: [],
     kocluklOgrenciler: [],
+    koclukNotlari: {},
     ogretmenSifreleri: [],
     sinifTemizligi: {},
   };
@@ -3932,6 +4061,11 @@ function StudentTracker() {
   const [sinifTemizligi, setSinifTemizligi] = useState({});
   const [kocluklSiniflar, setKocluklSiniflar] = useState([]);
   const [kocluklOgrenciler, setKocluklOgrenciler] = useState([]);
+  // Koçluk sekmesindeki "Not Al" özelliğinin verisi. Diğer koçluk takipleri (devam/soru/kitap) gibi
+  // tarih bazlı tutulur: { [tarihISO]: { [koçlukÖğrenciId]: metin } }. Karakter sınırı yoktur (bkz.
+  // KoclukNotTakip) — Davranışlar sekmesindeki günlük limitli notlardan kasıtlı olarak ayrı bir
+  // depodur, çünkü bu notlar Koçluk'un kendi öğrenci listesine (kocluklOgrenciler) bağlıdır.
+  const [koclukNotlari, setKoclukNotlari] = useState({});
   const [ogretmenSifreleri, setOgretmenSifreleri] = useState([]);
   const [veliSifreOnek, setVeliSifreOnek] = useState(""); // bu Ana Kullanıcının velilere verdiği şifrelerin başındaki ön ek
   const [dersProgrami, setDersProgrami] = useState(dpVarsayilanVeri());
@@ -4056,6 +4190,7 @@ function StudentTracker() {
             davranisNotlari: {},
             kocluklSiniflar: [],
             kocluklOgrenciler: [],
+            koclukNotlari: {},
             ogretmenSifreleri: [],
             sinifTemizligi: {},
             siniflar: SINIFLAR,
@@ -4088,6 +4223,7 @@ function StudentTracker() {
           setDavranisNotlari(bosVeri.davranisNotlari);
           setKocluklSiniflar(bosVeri.kocluklSiniflar);
           setKocluklOgrenciler(bosVeri.kocluklOgrenciler);
+          setKoclukNotlari(bosVeri.koclukNotlari);
           setOgretmenSifreleri(bosVeri.ogretmenSifreleri);
           setSinifTemizligi(bosVeri.sinifTemizligi);
           setSiniflarState(bosVeri.siniflar);
@@ -4129,6 +4265,7 @@ function StudentTracker() {
       setSiniflarState(Array.isArray(data.siniflar) && data.siniflar.length > 0 ? data.siniflar : SINIFLAR);
       setKocluklSiniflar(data.kocluklSiniflar || []);
       setKocluklOgrenciler(data.kocluklOgrenciler || []);
+      setKoclukNotlari(data.koclukNotlari || {});
       setOgretmenSifreleri(data.ogretmenSifreleri || []);
       setVeliSifreOnek(data.veliSifreOnek || veliOnekVarsayilaniHesapla(anaId));
       setDersProgrami(data.dersProgrami ? dpGuvenliVeri(data.dersProgrami) : dpVarsayilanVeri());
@@ -4180,6 +4317,7 @@ function StudentTracker() {
   const updateSinifTemizligi = useCallback((next) => { setSinifTemizligi(next); saveKey("sinifTemizligi", next); }, []);
   const updateKocluklSiniflar = useCallback((next) => { setKocluklSiniflar(next); saveKey("kocluklSiniflar", next); }, []);
   const updateKocluklOgrenciler = useCallback((next) => { setKocluklOgrenciler(next); saveKey("kocluklOgrenciler", next); }, []);
+  const updateKoclukNotlari = useCallback((next) => { setKoclukNotlari(next); saveKey("koclukNotlari", next); }, []);
   const updateOgretmenSifreleri = useCallback((next) => {
     setOgretmenSifreleri(next);
     saveKey("ogretmenSifreleri", next);
@@ -4269,7 +4407,7 @@ function StudentTracker() {
   if (rol === "veli") {
     return <VeliUygulama veliNo={veliNo} students={students} grades={grades} dersYoklama={dersYoklama} attendance={attendance}
       denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
-      soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler}
+      soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari}
       davranisNotlari={davranisNotlari}
       baglanti={baglanti} cikisYap={cikisYap} />;
   }
@@ -4312,16 +4450,19 @@ function StudentTracker() {
         </aside>
 
         <main className="flex-1 min-w-0 px-4 sm:px-8 py-6 sm:py-8 max-w-4xl">
-          {tab === "genel" && <Genel students={students} dersYoklama={dersYoklama} grades={grades} setTab={setTab} otoAyar={otoAyar} updateOtoAyar={updateOtoAyar} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} rol={rol} kullaniciAdi={kullaniciAdi} />}
+          {tab === "genel" && <Genel students={students} dersYoklama={dersYoklama} grades={grades} setTab={setTab} otoAyar={otoAyar} updateOtoAyar={updateOtoAyar} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} rol={rol} kullaniciAdi={kullaniciAdi}
+            kocluklOgrenciler={kocluklOgrenciler} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari}
+            kocDevam={kocDevam} updateKocDevam={updateKocDevam} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum}
+            kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} koclukNotlari={koclukNotlari} updateKoclukNotlari={updateKoclukNotlari} />}
           {tab === "ogrenciler" && <Ogrenciler students={students} updateStudents={updateStudents} grades={grades} updateGrades={updateGrades} attendance={attendance} updateAttendance={updateAttendance} attendanceMeta={attendanceMeta} updateAttendanceMeta={updateAttendanceMeta} dersYoklama={dersYoklama} updateDersYoklama={updateDersYoklama} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} updateSiniflar={updateSiniflar} />}
           {tab === "davranislar" && (plan === "premium" ? <Davranislar students={students} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari} kullaniciAdi={kullaniciAdi} rol={rol} /> : <PremiumKilit baslik="Davranışlar" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "yoklama" && <Yoklama students={students} dersYoklama={dersYoklama} updateDersYoklama={updateDersYoklama} otoAyar={otoAyar} updateOtoAyar={updateOtoAyar} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} />}
           {tab === "notlar" && <Notlar students={students} grades={grades} updateGrades={updateGrades} />}
-          {tab === "kocluk" && <Kocluk kocluklSiniflar={kocluklSiniflar} updateKocluklSiniflar={updateKocluklSiniflar} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} students={students} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum} kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} kocDevam={kocDevam} updateKocDevam={updateKocDevam} plan={plan} kullaniciAdi={kullaniciAdi} />}
+          {tab === "kocluk" && <Kocluk kocluklSiniflar={kocluklSiniflar} updateKocluklSiniflar={updateKocluklSiniflar} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} students={students} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum} kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} kocDevam={kocDevam} updateKocDevam={updateKocDevam} koclukNotlari={koclukNotlari} updateKoclukNotlari={updateKoclukNotlari} plan={plan} kullaniciAdi={kullaniciAdi} />}
           {tab === "denemeler" && <Denemeler students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} />}
           {tab === "optik" && (plan === "premium" ? <OptikOkuyucuSayfa students={students} updateStudents={updateStudents} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} siniflar={siniflar} /> : <PremiumKilit baslik="Optik Okuyucu" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "sinifTemizligi" && (plan === "premium" ? <SinifTemizligi sinifTemizligi={sinifTemizligi} updateSinifTemizligi={updateSinifTemizligi} /> : <PremiumKilit baslik="Sınıf Temizliği" telegramKullaniciAdi={telegramKullaniciAdi} />)}
-          {tab === "karne" && <Karne students={students} grades={grades} attendance={attendance} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} setTab={setTab} />}
+          {tab === "karne" && <Karne students={students} grades={grades} attendance={attendance} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} setTab={setTab} />}
           {tab === "iletisim" && <Iletisim students={students} updateStudents={updateStudents} veliSifreOnek={veliSifreOnek} />}
           {tab === "dersProgrami" && rol === "admin" && (plan === "premium" ? <DersProgrami dersProgrami={dersProgrami} updateDersProgrami={updateDersProgrami} /> : <PremiumKilit baslik="Ders Programı Oluşturucu" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "yonetim" && rol === "admin" && <YonetimPaneli ogretmenSifreleri={ogretmenSifreleri} updateOgretmenSifreleri={updateOgretmenSifreleri} veliSifreOnek={veliSifreOnek} updateVeliSifreOnek={updateVeliSifreOnek} plan={plan} />}
@@ -4807,7 +4948,189 @@ function SinifTemizligi({ sinifTemizligi, updateSinifTemizligi }) {
   );
 }
 
-function Genel({ students, dersYoklama, grades, setTab, otoAyar, updateOtoAyar, otoGecmis, updateOtoGecmis, rol, kullaniciAdi }) {
+const HEDEF_ETIKET = { davranis: "Davranış Notu", devam: "Koçluk — Devam Durumu", soru: "Koçluk — Soru Çözüm", kitap: "Koçluk — Kitap Kontrol", not: "Koçluk — Not" };
+// Anasayfa'daki mikrofon butonu: öğretmen konuşur, tarayıcının yerleşik ses tanıma özelliğiyle (Web
+// Speech API) canlı olarak metne çevrilir, sesKomutunuAyristir ile bir taslak çıkarılır ve öğretmene
+// TÜM alanları (hedef bölüm, öğrenci, ders, artı/eksi, not metni) düzenleyebileceği bir onay ekranı
+// gösterilir. Hiçbir veri, öğretmen "Kaydet"e basmadan gerçek kayıtlara yazılmaz.
+function SesleKayitPaneli({ students, kocluklOgrenciler, davranisNotlari, updateDavranisNotlari, kocDevam, updateKocDevam, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, koclukNotlari, updateKoclukNotlari, kullaniciAdi, rol }) {
+  const Recognition = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+  const [dinliyor, setDinliyor] = useState(false);
+  const [canliMetin, setCanliMetin] = useState("");
+  const [taslak, setTaslak] = useState(null);
+  const [mesaj, setMesaj] = useState(null); // { tip: "ok" | "hata", metin }
+  const recognitionRef = useRef(null);
+  const havuzRef = useRef({ students, kocluklOgrenciler });
+  useEffect(() => { havuzRef.current = { students, kocluklOgrenciler }; }, [students, kocluklOgrenciler]);
+
+  useEffect(() => {
+    if (!Recognition) return;
+    const r = new Recognition();
+    r.lang = "tr-TR";
+    r.continuous = false;
+    r.interimResults = true;
+    r.maxAlternatives = 1;
+    r.onresult = (e) => {
+      let birlesikMetin = "";
+      for (let i = 0; i < e.results.length; i++) birlesikMetin += e.results[i][0].transcript;
+      setCanliMetin(birlesikMetin);
+      if (e.results[e.results.length - 1].isFinal) {
+        const { students: s, kocluklOgrenciler: k } = havuzRef.current;
+        setTaslak(sesKomutunuAyristir(birlesikMetin, s, k));
+      }
+    };
+    r.onerror = (e) => {
+      setDinliyor(false);
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") setMesaj({ tip: "hata", metin: "Mikrofon izni verilmedi. Tarayıcı ayarlarından mikrofona izin verin." });
+      else if (e.error === "no-speech") setMesaj({ tip: "hata", metin: "Ses algılanamadı, lütfen tekrar deneyin." });
+      else setMesaj({ tip: "hata", metin: "Ses tanıma sırasında bir sorun oluştu, lütfen tekrar deneyin." });
+    };
+    r.onend = () => setDinliyor(false);
+    recognitionRef.current = r;
+    return () => { try { r.stop(); } catch (err) {} };
+  }, [Recognition]);
+
+  const kayitBaslat = () => {
+    if (!recognitionRef.current) return;
+    setMesaj(null);
+    setTaslak(null);
+    setCanliMetin("");
+    setDinliyor(true);
+    try { recognitionRef.current.start(); } catch (err) { setDinliyor(false); }
+  };
+  const kayitDurdur = () => { try { recognitionRef.current && recognitionRef.current.stop(); } catch (err) {} setDinliyor(false); };
+
+  const taslakGuncelle = (alan, deger) => setTaslak((t) => ({ ...t, [alan]: deger }));
+  const vazgec = () => { setTaslak(null); setCanliMetin(""); setMesaj(null); };
+
+  const kaydet = () => {
+    if (!taslak) return;
+    if (!taslak.ogrenciId) { setMesaj({ tip: "hata", metin: "Lütfen bir öğrenci seçin." }); return; }
+    const bugun = todayISO();
+    if (taslak.hedef === "davranis") {
+      const temiz = (taslak.metin || "").trim();
+      if (!temiz) { setMesaj({ tip: "hata", metin: "Lütfen bir not yazın." }); return; }
+      const mevcut = (davranisNotlari && davranisNotlari[taslak.ogrenciId]) || [];
+      const bugunkuler = mevcut.filter((n) => n.tarih === bugun);
+      if (bugunkuler.length >= DAVRANIS_GUNLUK_LIMIT) { setMesaj({ tip: "hata", metin: `Bu öğrenci için bugün en fazla ${DAVRANIS_GUNLUK_LIMIT} not girilebilir.` }); return; }
+      const yeniNot = { id: uid(), tarih: bugun, saat: new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }), zaman: Date.now(), metin: temiz.slice(0, 400), ekleyen: kullaniciAdi || (rol === "admin" ? "Yönetici" : "Öğretmen") };
+      updateDavranisNotlari({ ...(davranisNotlari || {}), [taslak.ogrenciId]: [...mevcut, yeniNot] });
+    } else if (taslak.hedef === "devam" || taslak.hedef === "kitap") {
+      const kayitlar = taslak.hedef === "devam" ? kocDevam : kitapKontrol;
+      const guncelle = taslak.hedef === "devam" ? updateKocDevam : updateKitapKontrol;
+      const gunKaydi = { ...(kayitlar[bugun] || {}), [taslak.ogrenciId]: taslak.durum === "eksi" ? "eksi" : "arti" };
+      guncelle({ ...kayitlar, [bugun]: gunKaydi });
+    } else if (taslak.hedef === "soru") {
+      if (!taslak.ders) { setMesaj({ tip: "hata", metin: "Lütfen bir ders seçin." }); return; }
+      const gunKaydiOnceki = soruCozum[bugun] || {};
+      const mevcutListe = normalizeSoruKayit(gunKaydiOnceki[taslak.ogrenciId]);
+      const dersVar = mevcutListe.find((m) => m.ders === taslak.ders);
+      let yeniListe;
+      if (dersVar) yeniListe = mevcutListe.map((m) => (m.id === dersVar.id ? { ...m, durum: taslak.durum === "eksi" ? "eksi" : "arti" } : m));
+      else {
+        if (mevcutListe.length >= SORU_COZUM_GUNLUK_LIMIT) { setMesaj({ tip: "hata", metin: `Bu öğrenci için bugün en fazla ${SORU_COZUM_GUNLUK_LIMIT} ders kaydı girilebilir.` }); return; }
+        yeniListe = [...mevcutListe, { id: uid(), ders: taslak.ders, durum: taslak.durum === "eksi" ? "eksi" : "arti" }];
+      }
+      updateSoruCozum({ ...soruCozum, [bugun]: { ...gunKaydiOnceki, [taslak.ogrenciId]: yeniListe } });
+    } else if (taslak.hedef === "not") {
+      const temiz = (taslak.metin || "").trim();
+      if (!temiz) { setMesaj({ tip: "hata", metin: "Lütfen bir not yazın." }); return; }
+      const gunKaydi = { ...((koclukNotlari || {})[bugun] || {}), [taslak.ogrenciId]: { metin: temiz, ekleyen: kullaniciAdi || "Öğretmen", zaman: Date.now() } };
+      updateKoclukNotlari({ ...(koclukNotlari || {}), [bugun]: gunKaydi });
+    }
+    setMesaj({ tip: "ok", metin: "Kaydedildi." });
+    setTaslak(null);
+    setCanliMetin("");
+  };
+
+  if (!Recognition) {
+    return (
+      <Kart className="p-4 mb-6">
+        <h2 className="font-display text-base font-medium mb-1 flex items-center gap-2"><IconMic size={17} color={SUBTLE} />Sesle Kayıt</h2>
+        <p className="text-xs" style={{ color: SUBTLE }}>Bu tarayıcı sesli girişi desteklemiyor. Chrome (Android/masaüstü) kullanmayı deneyin.</p>
+      </Kart>
+    );
+  }
+
+  const havuz = taslak ? ((taslak.hedef === "davranis" ? students : kocluklOgrenciler) || []) : [];
+  const ogrenciListesi = havuz.slice().sort((a, b) => a.ad.localeCompare(b.ad, "tr"));
+
+  return (
+    <Kart className="p-4 mb-6">
+      <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+        <h2 className="font-display text-base font-medium flex items-center gap-2"><IconMic size={17} color="#00897B" />Sesle Kayıt</h2>
+        <button onClick={dinliyor ? kayitDurdur : kayitBaslat}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs sm:text-sm font-semibold shrink-0 text-white"
+          style={{ background: dinliyor ? RED : "#00897B" }}>
+          <IconMic size={14} color="#fff" />{dinliyor ? "Dinlemeyi Durdur" : "Konuşarak Kayıt Ekle"}
+        </button>
+      </div>
+      <p className="text-xs mb-3" style={{ color: SUBTLE }}>Örnek: "Ahmet Demir matematik soru çözümü gerçekleştirdi, koçluğa gir" ya da "Zeynep teneffüste arkadaşıyla kavga etti". Söylediğiniz hiçbir şey, aşağıda görüp onaylamadan kaydedilmez.</p>
+
+      {dinliyor && (
+        <div className="rounded-xl px-3.5 py-2.5 text-sm mb-3 flex items-center gap-2" style={{ background: "#00897B14", color: "#00897B" }}>
+          <span className="w-2 h-2 rounded-full shrink-0 animate-pulse" style={{ background: "#00897B" }} />
+          {canliMetin ? canliMetin : "Dinleniyor, konuşabilirsiniz…"}
+        </div>
+      )}
+
+      {mesaj && (
+        <p className="text-xs mb-3 font-medium" style={{ color: mesaj.tip === "hata" ? RED : GREEN }}>{mesaj.metin}</p>
+      )}
+
+      {taslak && (
+        <div className="rounded-xl p-3.5 flex flex-col gap-3" style={{ background: BG, border: `1px solid ${BORDER}` }}>
+          <p className="text-xs italic" style={{ color: SUBTLE }}>Algılanan: "{taslak.metin}"</p>
+          <div>
+            <p className="text-xs font-medium mb-1" style={{ color: SUBTLE }}>Nereye eklensin?</p>
+            <GoogleSelect value={taslak.hedef} onChange={(e) => taslakGuncelle("hedef", e.target.value)} className="w-full">
+              {Object.keys(HEDEF_ETIKET).map((h) => <option key={h} value={h}>{HEDEF_ETIKET[h]}</option>)}
+            </GoogleSelect>
+          </div>
+          <div>
+            <p className="text-xs font-medium mb-1" style={{ color: SUBTLE }}>Öğrenci</p>
+            <GoogleSelect value={taslak.ogrenciId} onChange={(e) => taslakGuncelle("ogrenciId", e.target.value)} className="w-full">
+              <option value="">Öğrenci seçin</option>
+              {ogrenciListesi.map((o) => <option key={o.id} value={o.id}>{o.ad}{o.sinif ? ` · ${o.sinif}` : ""}</option>)}
+            </GoogleSelect>
+            {!taslak.ogrenciId && <p className="text-[11px] mt-1" style={{ color: RED }}>Söylenen isimle eşleşen bir öğrenci bulunamadı, lütfen elle seçin.</p>}
+          </div>
+          {taslak.hedef === "soru" && (
+            <div>
+              <p className="text-xs font-medium mb-1" style={{ color: SUBTLE }}>Ders</p>
+              <GoogleSelect value={taslak.ders || ""} onChange={(e) => taslakGuncelle("ders", e.target.value)} className="w-full">
+                <option value="">Ders seçin</option>
+                {DERSLER.map((d) => <option key={d} value={d}>{d}</option>)}
+              </GoogleSelect>
+            </div>
+          )}
+          {(taslak.hedef === "devam" || taslak.hedef === "kitap" || taslak.hedef === "soru") && (
+            <div className="flex items-center gap-2">
+              <Chip active={taslak.durum === "arti"} color={GREEN} label={taslak.hedef === "devam" ? "Geldi" : "Yaptı / Artı"} onClick={() => taslakGuncelle("durum", "arti")}><IconPlus size={16} strokeWidth={3} color={taslak.durum === "arti" ? "#fff" : SUBTLE} /></Chip>
+              <Chip active={taslak.durum === "eksi"} color={RED} label={taslak.hedef === "devam" ? "Gelmedi" : "Yapmadı / Eksi"} onClick={() => taslakGuncelle("durum", "eksi")}><IconMinus size={16} strokeWidth={3} color={taslak.durum === "eksi" ? "#fff" : SUBTLE} /></Chip>
+            </div>
+          )}
+          {(taslak.hedef === "davranis" || taslak.hedef === "not") && (
+            <div>
+              <p className="text-xs font-medium mb-1" style={{ color: SUBTLE }}>Not metni</p>
+              <textarea value={taslak.metin} onChange={(e) => taslakGuncelle("metin", e.target.value)} rows={2}
+                maxLength={taslak.hedef === "davranis" ? 400 : undefined}
+                className="w-full bg-white border rounded-xl px-3.5 py-2.5 text-sm focus:outline-none resize-y" style={{ borderColor: BORDER }} />
+            </div>
+          )}
+          <div className="flex items-center gap-2 justify-end">
+            <button onClick={vazgec} className="text-xs font-medium px-3 py-2 rounded-full" style={{ color: SUBTLE }}>Vazgeç</button>
+            <button onClick={kaydet} className="flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full text-white" style={{ background: "#00897B" }}>
+              <IconCheck size={13} strokeWidth={3} color="#fff" />Kaydet
+            </button>
+          </div>
+        </div>
+      )}
+    </Kart>
+  );
+}
+
+function Genel({ students, dersYoklama, grades, setTab, otoAyar, updateOtoAyar, otoGecmis, updateOtoGecmis, rol, kullaniciAdi, kocluklOgrenciler, davranisNotlari, updateDavranisNotlari, kocDevam, updateKocDevam, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, koclukNotlari, updateKoclukNotlari }) {
   const today = useBugun();
   const bugunDersler = dersYoklama[today] || {};
   const stats = useMemo(() => {
@@ -4878,6 +5201,10 @@ function Genel({ students, dersYoklama, grades, setTab, otoAyar, updateOtoAyar, 
           </p>
         </div>
       )}
+      <SesleKayitPaneli students={students} kocluklOgrenciler={kocluklOgrenciler} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari}
+        kocDevam={kocDevam} updateKocDevam={updateKocDevam} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum}
+        kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} koclukNotlari={koclukNotlari} updateKoclukNotlari={updateKoclukNotlari}
+        kullaniciAdi={kullaniciAdi} rol={rol} />
       <Baslik title="Anasayfa" desc={fmtDateTR(today)} />
       {students.length === 0 ? (
         <Bos mesaj="Henüz öğrenci eklenmedi" ipucu='"Öğrenciler" sekmesinden ilk kaydı oluşturun.' />
@@ -6566,6 +6893,88 @@ function SoruCozumTakip({ students, siniflar, kayitlar, updateKayitlar, tarih, s
   );
 }
 
+// Koçluk "Not Al": diğer koçluk takipleri (Devam/Soru Çözüm/Kitap Kontrol) ile aynı tarih+sınıf
+// mantığını kullanır — { [tarihISO]: { [koçlukÖğrenciId]: metin } } — ama artı/eksi yerine
+// SERBEST METİN tutar; herhangi bir karakter/harf sınırı YOKTUR (bilerek maxLength konmadı).
+// Girilen notlar Karne ekranında da (bkz. Karne bileşenindeki "Koçluk Notları" bölümü) gösterilir.
+function KoclukNotTakip({ students, siniflar, kayitlar, updateKayitlar, tarih, setTarih, sinifFiltre, setSinifFiltre, kullaniciAdi }) {
+  useEffect(() => {
+    if ((!sinifFiltre || !siniflar.includes(sinifFiltre)) && siniflar.length) setSinifFiltre(siniflar[0]);
+    if (!siniflar.length) setSinifFiltre("");
+  }, [siniflar]);
+  const sinifOgrencileri = useMemo(() => students.filter((s) => s.sinif === sinifFiltre).slice().sort((a, b) => a.ad.localeCompare(b.ad, "tr")), [students, sinifFiltre]);
+  const gunKaydi = kayitlar[tarih] || {};
+  // Kayıtlı değer eski sürümlerde düz metin (string) olabilir, yeni sürümde {metin, ekleyen, zaman}
+  // nesnesi — ikisini de tek noktadan okumak için bu yardımcı kullanılır.
+  const kayitMetni = (deger) => (typeof deger === "string" ? deger : deger?.metin) || "";
+  // Her tuş vuruşunda Firebase'e yazmamak için metin önce burada (taslak olarak) tutulur, "Kaydet"e
+  // basılınca ya da tarih/sınıf değişince kayıtlı değere göre sıfırlanır.
+  const [taslaklar, setTaslaklar] = useState({});
+  useEffect(() => { setTaslaklar({}); }, [tarih, sinifFiltre]);
+  const metinAl = (studentId) => (taslaklar[studentId] !== undefined ? taslaklar[studentId] : kayitMetni(gunKaydi[studentId]));
+  const metinDegistir = (studentId, deger) => setTaslaklar((t) => ({ ...t, [studentId]: deger }));
+  const kaydet = (studentId) => {
+    const metin = metinAl(studentId).trim();
+    const guncelGun = { ...gunKaydi };
+    // Not kimin girdiğini (öğretmen adını) da saklıyoruz — Karne'de öğretmene gösterilir, veli
+    // görünümünde ise (bkz. VeliOgrenciGoster/koclukNotlariKaydi) bu alan hiç okunmadığı için görünmez.
+    if (metin) guncelGun[studentId] = { metin, ekleyen: kullaniciAdi || "Öğretmen", zaman: Date.now() };
+    else delete guncelGun[studentId];
+    updateKayitlar({ ...kayitlar, [tarih]: guncelGun });
+    setTaslaklar((t) => { const t2 = { ...t }; delete t2[studentId]; return t2; });
+  };
+  const notluSayisi = useMemo(() => sinifOgrencileri.filter((s) => kayitMetni(gunKaydi[s.id]).trim()).length, [gunKaydi, sinifOgrencileri]);
+
+  return (
+    <div>
+      <Baslik title="Not Al" desc="Sınıf ve tarih seçin; öğrenciyle ilgili almak istediğiniz notu yazın. Herhangi bir karakter sınırı yoktur — girdiğiniz notlar Karne ekranında da görünür." />
+      <Kart className="flex flex-wrap items-center gap-4 mb-6 p-4">
+        <SinifSecici value={sinifFiltre} onChange={setSinifFiltre} hepsi={false} siniflar={siniflar} className="sm:w-40" />
+        <GoogleInput type="date" value={tarih} onChange={(e) => setTarih(e.target.value)} />
+        <span className="text-xs font-medium ml-auto" style={{ color: "#00897B" }}>{notluSayisi} öğrenciye not girildi</span>
+      </Kart>
+      {siniflar.length === 0 ? <Bos mesaj="Henüz koçluk sınıfı oluşturulmadı" ipucu='Önce "Sınıf & Öğrenci" sekmesinden bir sınıf oluşturun.' /> : sinifOgrencileri.length === 0 ? <Bos mesaj="Bu sınıfta öğrenci yok" ipucu='Önce "Sınıf & Öğrenci" sekmesinden öğrenci ekleyin.' /> : (
+        <Kart>
+          {sinifOgrencileri.map((s) => {
+            const metin = metinAl(s.id);
+            const kayitliDeger = gunKaydi[s.id];
+            const degisti = metin !== kayitMetni(kayitliDeger);
+            // Bu özellik eklenmeden önce girilmiş notlar düz metin (string) olarak kaydedilmişti ve
+            // kimin yazdığı bilgisi hiç tutulmamıştı. Metni değiştirmeden sadece "Kaydet"e basarak da
+            // bu eski notlara yazar bilgisini eklenebilsin diye, böyle bir not varsa buton metin
+            // değişmese bile aktif kalır.
+            const yazariEksikEskiNot = typeof kayitliDeger === "string" && kayitliDeger.trim();
+            return (
+              <div key={s.id} className="px-4 py-3" style={{ borderBottom: `1px solid ${BORDER}` }}>
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{s.ad}</p>
+                    <p className="text-[11px]" style={{ color: SUBTLE }}>{s.sinif || "—"}</p>
+                  </div>
+                  <button onClick={() => kaydet(s.id)} disabled={!degisti && !yazariEksikEskiNot}
+                    className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full shrink-0 disabled:opacity-40"
+                    style={{ color: "#00897B", border: "1px solid #00897B" }}>
+                    <IconCheck size={13} strokeWidth={3} color="#00897B" />Kaydet
+                  </button>
+                </div>
+                {yazariEksikEskiNot && !degisti && (
+                  <p className="text-[11px] mb-1.5" style={{ color: "#B45309" }}>Bu not, "kim yazdı" bilgisi eklenmeden önce girilmiş — adınızı eklemek için tekrar "Kaydet"e basabilirsiniz.</p>
+                )}
+                <textarea value={metin} onChange={(e) => metinDegistir(s.id, e.target.value)} rows={2}
+                  placeholder="Öğrenciyle ilgili not yazın…"
+                  className="w-full bg-white border rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 resize-y"
+                  style={{ borderColor: BORDER }}
+                  onFocus={(e) => { e.target.style.boxShadow = "0 0 0 3px #00897B26"; e.target.style.borderColor = "#00897B"; }}
+                  onBlur={(e) => { e.target.style.boxShadow = "none"; e.target.style.borderColor = BORDER; }} />
+              </div>
+            );
+          })}
+        </Kart>
+      )}
+    </div>
+  );
+}
+
 function KoclukYonetim({ siniflar, updateSiniflar, ogrenciler, updateOgrenciler, students = [], plan, kullaniciAdi }) {
   const [yeniSinif, setYeniSinif] = useState("");
   const [acikSinif, setAcikSinif] = useState(null);
@@ -6770,7 +7179,7 @@ function KoclukYonetim({ siniflar, updateSiniflar, ogrenciler, updateOgrenciler,
   );
 }
 
-function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, updateKocluklOgrenciler, students, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, kocDevam, updateKocDevam, plan, kullaniciAdi }) {
+function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, updateKocluklOgrenciler, students, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, kocDevam, updateKocDevam, koclukNotlari, updateKoclukNotlari, plan, kullaniciAdi }) {
   const [altSekme, setAltSekme] = useState("siniflar");
   const [tarih, setTarih] = useState(todayISO());
   const [sinifFiltre, setSinifFiltre] = useState(kocluklSiniflar[0] || "");
@@ -6779,10 +7188,11 @@ function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, upd
     { id: "devam", label: "Devam Durumu", icon: IconCalendar },
     { id: "soru", label: "Soru Çözüm", icon: IconTarget },
     { id: "kitap", label: "Kitap Kontrol", icon: IconBook },
+    { id: "not", label: "Not Al", icon: IconNote },
   ];
   return (
     <div>
-      <Baslik title="Koçluk" desc="Koçluk için kendi sınıflarınızı ve öğrencilerinizi oluşturun; günlük devam, soru çözüm ve kitap takibini artı / eksi olarak işaretleyin." />
+      <Baslik title="Koçluk" desc="Koçluk için kendi sınıflarınızı ve öğrencilerinizi oluşturun; günlük devam, soru çözüm ve kitap takibini artı / eksi olarak işaretleyin, öğrencilerle ilgili notlar alın." />
       <div className="flex justify-center mb-6">
         <div className="grid grid-cols-2 gap-3 w-full max-w-md">
           {altSekmeler.map((t) => {
@@ -6816,6 +7226,10 @@ function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, upd
         <ArtiEksiTakip students={kocluklOgrenciler} siniflar={kocluklSiniflar} kayitlar={kitapKontrol} updateKayitlar={updateKitapKontrol}
           tarih={tarih} setTarih={setTarih} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre}
           baslik="Kitap Kontrol" aciklama="Sınıf ve tarih seçin, her öğrencinin kitap kontrolünü işaretleyin." aktifRenk={BLUE} />
+      )}
+      {altSekme === "not" && (
+        <KoclukNotTakip students={kocluklOgrenciler} siniflar={kocluklSiniflar} kayitlar={koclukNotlari || {}} updateKayitlar={updateKoclukNotlari}
+          tarih={tarih} setTarih={setTarih} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre} kullaniciAdi={kullaniciAdi} />
       )}
     </div>
   );
@@ -7164,7 +7578,7 @@ function Notlar({ students, grades, updateGrades }) {
 
 const VELI_TUM_DENEME_ID = "__VELI_TUM__";
 
-function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, davranisUyarilari, updateDavranisUyarilari, davranisNotlari, setTab }) {
+function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, davranisUyarilari, updateDavranisUyarilari, davranisNotlari, setTab }) {
   const [noGiris, setNoGiris] = useState("");
   const [ogrenci, setOgrenci] = useState(null);
   const [hata, setHata] = useState("");
@@ -7353,6 +7767,21 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
     const kotuMu = (soruToplam > 0 && soruOrani < 50) || (kitapToplam > 0 && kitapOrani < 50) || (devamToplam > 0 && devamOrani < 50);
     return { soruArti, soruEksi, soruToplam, soruOrani, kitapArti, kitapEksi, kitapToplam, kitapOrani, devamArti, devamEksi, devamToplam, devamOrani, kotuMu };
   }, [koclukOgrenci, soruCozum, kitapKontrol, kocDevam]);
+
+  // Koçluk sekmesindeki "Not Al" ile girilen serbest metin notlar — { [tarih]: { [id]: {metin, ekleyen} } }
+  // şeklindeki kayıttan, en yeni tarih en üstte olacak şekilde düz bir listeye çevrilir. Eski kayıtlar
+  // (bu alan eklenmeden önce girilmiş) düz metin (string) olarak durabilir — ikisi de desteklenir.
+  const koclukNotlariOgrenci = useMemo(() => {
+    if (!koclukOgrenci || !koclukNotlari) return [];
+    const liste = [];
+    Object.keys(koclukNotlari).forEach((t) => {
+      const kayit = koclukNotlari[t]?.[koclukOgrenci.id];
+      const metin = typeof kayit === "string" ? kayit : kayit?.metin;
+      const ekleyen = typeof kayit === "object" ? kayit?.ekleyen : "";
+      if (metin && metin.trim()) liste.push({ tarih: t, metin, ekleyen });
+    });
+    return liste.sort((a, b) => b.tarih.localeCompare(a.tarih));
+  }, [koclukOgrenci, koclukNotlari]);
 
   // Koçluk: veri girilmiş tüm tarihlerin listesi (devam / kitap kontrol / soru çözümden herhangi biri varsa),
   // öğretmene de veli ekranındaki gibi tarih seçenekleri olarak sunulur; en yeniden en eskiye sıralı.
@@ -7990,6 +8419,27 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
             </Kart>
           )}
 
+          <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconNote size={17} color="#00897B" />Koçluk Notları</h2>
+          {koclukNotlariOgrenci.length === 0 ? (
+            <Kart className="p-4 mb-6" style={{ borderLeft: `3px solid ${BORDER}` }}>
+              <p className="text-sm" style={{ color: SUBTLE }}>Bu öğrenci için henüz koçluk notu girilmemiş.</p>
+            </Kart>
+          ) : (
+            <Kart className="p-4 mb-6">
+              <div className="flex flex-col gap-3">
+                {koclukNotlariOgrenci.map((n) => (
+                  <div key={n.tarih} className="flex items-start gap-3 pb-3" style={{ borderBottom: `1px solid ${BORDER}` }}>
+                    <span className="text-xs font-medium px-2.5 py-1 rounded-full shrink-0" style={{ color: "#00897B", background: "#00897B14" }}>{fmtDateTR(n.tarih)}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm whitespace-pre-wrap">{n.metin}</p>
+                      {n.ekleyen && <p className="text-[11px] mt-1" style={{ color: SUBTLE }}>— {n.ekleyen}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Kart>
+          )}
+
           <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconNote size={17} color="#F59E0B" />Davranış Notları</h2>
           {davranisNotlariOgrenci.length === 0 ? (
             <Kart className="p-4 mb-6" style={{ borderLeft: `3px solid ${BORDER}` }}>
@@ -8217,7 +8667,7 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
 // --- Veli Girişi: öğretmenin tam uygulamasından tamamen ayrı, sabit tek ekranlı, salt-okunur bir
 // kabuk. Veli hiçbir veriyi değiştiremez; sadece kendi öğrencisinin no'sunu veya adını yazarak
 // arar ve o öğrenciye ait yoklama, not ve deneme bilgilerini görüntüler.
-function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, davranisNotlari, baglanti, cikisYap }) {
+function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, davranisNotlari, baglanti, cikisYap }) {
   return (
     <div className="min-h-screen w-full" style={{ background: BG, color: INK }}>
       <header className="sticky top-0 z-30 flex items-center gap-3 px-4 sm:px-6 py-3 border-b" style={{ background: SURFACE, borderColor: BORDER }}>
@@ -8235,7 +8685,7 @@ function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denem
       <main className="flex-1 min-w-0 px-4 sm:px-8 py-6 sm:py-8 max-w-2xl mx-auto">
         <VeliOgrenciGoster veliNo={veliNo} students={students} grades={grades} dersYoklama={dersYoklama} attendance={attendance}
           denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
-          soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} davranisNotlari={davranisNotlari} />
+          soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} davranisNotlari={davranisNotlari} />
       </main>
     </div>
   );
@@ -8247,7 +8697,7 @@ const VELI_TUM_DENEMELER_ID = "__TUM_DENEMELER__";
 const VELI_KOCLUK_TOPLAM_ID = "__KOCLUK_TOPLAM__";
 const VELI_DAVRANIS_TUM_ID = "__DAVRANIS_TUM__";
 
-function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, davranisNotlari }) {
+function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, davranisNotlari }) {
   const ogrenci = useMemo(() => students.find((s) => s.no === veliNo) || null, [students, veliNo]);
   const [denemeSecili, setDenemeSecili] = useState("");
   const denemeSeciliTumMu = denemeSecili === VELI_TUM_DENEMELER_ID;
@@ -8351,6 +8801,19 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
     if (!devamArti && !devamEksi && !kitapArti && !kitapEksi && !soruYapti && !soruYapmadi) return null;
     return { devamArti, devamEksi, kitapArti, kitapEksi, soruYapti, soruYapmadi };
   }, [kocluklKaydi, kocDevam, kitapKontrol, soruCozum]);
+
+  // Koçluk notları — veli görünümünde notun METNİ ve TARİHİ gösterilir, notu KİMİN yazdığı (ekleyen)
+  // bilerek gösterilmez; bu alan zaten aşağıda hiç okunmuyor.
+  const koclukNotlariKaydi = useMemo(() => {
+    if (!kocluklKaydi || !koclukNotlari) return [];
+    const liste = [];
+    Object.keys(koclukNotlari).forEach((t) => {
+      const kayit = koclukNotlari[t]?.[kocluklKaydi.id];
+      const metin = typeof kayit === "string" ? kayit : kayit?.metin;
+      if (metin && metin.trim()) liste.push({ tarih: t, metin });
+    });
+    return liste.sort((a, b) => b.tarih.localeCompare(a.tarih));
+  }, [kocluklKaydi, koclukNotlari]);
 
   // Koçluk: veri girilmiş tüm tarihlerin listesi (devam / kitap kontrol / soru çözümden herhangi biri varsa),
   // veliye seçenek olarak sunulur; en yeniden en eskiye sıralı.
@@ -8761,6 +9224,20 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
           )}
         </Kart>
       )}
+
+      {kocluklKaydi && koclukNotlariKaydi.length > 0 && (
+        <Kart className="p-5">
+          <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconNote size={17} color="#00897B" />Koçluk Notları</h2>
+          <div className="flex flex-col gap-3">
+            {koclukNotlariKaydi.map((n) => (
+              <div key={n.tarih} className="flex items-start gap-3 pb-3" style={{ borderBottom: `1px solid ${BORDER}` }}>
+                <span className="text-xs font-medium px-2.5 py-1 rounded-full shrink-0" style={{ color: "#00897B", background: "#00897B14" }}>{fmtDateTR(n.tarih)}</span>
+                <p className="text-sm flex-1 min-w-0 whitespace-pre-wrap">{n.metin}</p>
+              </div>
+            ))}
+          </div>
+        </Kart>
+      )}
     </div>
   );
 }
@@ -8802,8 +9279,8 @@ function Denemeler({ students, updateStudents, denemeler, denemeSonuclari, updat
           );
         })}
       </div>
-      {altSekme === "giris" && <DenemeGiris students={students} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} denemeSecili={denemeSecili} setDenemeSecili={setDenemeSecili} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre} altSekme={altSekme} setAltSekme={setAltSekme} />}
-      {altSekme === "iceAktar" && <DenemeIceAktar students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} />}
+      {altSekme === "giris" && <DenemeGiris students={students} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} denemeSecili={denemeSecili} setDenemeSecili={setDenemeSecili} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre} altSekme={altSekme} setAltSekme={setAltSekme} siniflar={siniflar} />}
+      {altSekme === "iceAktar" && <DenemeIceAktar students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} setAltSekme={setAltSekme} setDenemeSecili={setDenemeSecili} />}
       {altSekme === "ilk50" && <DenemeIlk50 students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} />}
       {altSekme === "sinif" && <DenemeSinifKiyas students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} />}
       {altSekme === "ders" && <DenemeDersKiyas students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} />}
@@ -8842,22 +9319,41 @@ const ALIAS_LISTESI_UZUNA_GORE = Object.entries(DERS_ALIASLAR)
   .flatMap(([ders, aliaslar]) => aliaslar.map((alias) => ({ ders, alias })))
   .sort((a, b) => b.alias.length - a.alias.length);
 
+// Bir ders listesinden (ör. bir denemenin o seviyeye özel ders listesi) eşleştirme alias listesi
+// üretir. Bilinen (DERS_ALIASLAR'daki) bir ders için standart aliaslar kullanılır; okulun kendi
+// eklediği özel bir ders adı için (ör. "Edebiyat") ise dersin tam adı ve ilk kelimesi otomatik
+// olarak alias sayılır — böylece PDF/Excel başlıklarında bu özel dersler de tanınabilir.
+function aliasListesiUret(dersler) {
+  const girdiler = [];
+  (dersler || []).forEach((ders) => {
+    const bilinen = DERS_ALIASLAR[ders];
+    if (bilinen) { bilinen.forEach((alias) => girdiler.push({ ders, alias })); return; }
+    const tamAd = normalizeTr(ders);
+    if (tamAd) girdiler.push({ ders, alias: tamAd });
+    const ilkKelime = normalizeTr(String(ders || "").trim().split(/\s+/)[0] || "");
+    if (ilkKelime && ilkKelime !== tamAd) girdiler.push({ ders, alias: ilkKelime });
+  });
+  return girdiler.sort((a, b) => b.alias.length - a.alias.length);
+}
+
 // Bir kelime grubunun (ör. bir Excel başlığının ders adı kısmı, ya da bir PDF başlık satırındaki
 // tek bir kelime) hangi derse ait olduğunu bulur. Önce tüm kelimelerin boşluksuz birleşimiyle TAM
 // eşleşme aranır (ör. "fenbilimleri", "dinkulturuveahlakbilgisi"), bulunamazsa kelimeler tek tek TAM
 // eşleşme için denenir (ör. "MAT", "FEN", "SOS", "DİN", "TUR", "ING" gibi kısaltmalar). Asla alt-dize
 // (substring) eşleşmesi YAPILMAZ — kısa kısaltmaların başka bir derse ait uzun bir kelimenin içinde
-// tesadüfen geçmesiyle yanlış eşleşmeyi engeller.
-function dersEslestir(kelimeler) {
+// tesadüfen geçmesiyle yanlış eşleşmeyi engeller. `aliasListesi` verilmezse sistemin standart LGS
+// ders listesi (ALIAS_LISTESI_UZUNA_GORE) kullanılır; bir denemenin kendi ders listesiyle eşleştirme
+// yapmak için aliasListesiUret(...) ile üretilmiş bir liste geçilebilir.
+function dersEslestir(kelimeler, aliasListesi = ALIAS_LISTESI_UZUNA_GORE) {
   const birlesik = normalizeTr((kelimeler || []).join(""));
   if (!birlesik) return null;
-  for (const { ders, alias } of ALIAS_LISTESI_UZUNA_GORE) {
+  for (const { ders, alias } of aliasListesi) {
     if (birlesik === alias) return ders;
   }
   for (const kelime of kelimeler || []) {
     const n = normalizeTr(kelime);
     if (!n) continue;
-    for (const { ders, alias } of ALIAS_LISTESI_UZUNA_GORE) {
+    for (const { ders, alias } of aliasListesi) {
       if (n === alias) return ders;
     }
   }
@@ -8866,7 +9362,7 @@ function dersEslestir(kelimeler) {
 // Bir Excel sütun başlığının hangi derse ve doğru/yanlış alanına ait olduğunu tahmin eder
 // ("Türkçe D", "Matematik Doğru", "FEN_Y" gibi yaygın kalıpları tanır). Bulamazsa null döner;
 // bu durumda kullanıcı sütunu aşağıdaki eşleştirme ekranından elle seçebilir.
-function kolonAyristir(baslik) {
+function kolonAyristir(baslik, aliasListesi = ALIAS_LISTESI_UZUNA_GORE) {
   const parcalar = String(baslik || "").trim().split(/[\s._/-]+/).filter(Boolean);
   if (!parcalar.length) return null;
   const son = normalizeTr(parcalar[parcalar.length - 1]);
@@ -8876,7 +9372,7 @@ function kolonAyristir(baslik) {
   if (!alan) return null;
   const dersKelimeleri = parcalar.slice(0, -1);
   if (!dersKelimeleri.length) return null;
-  const ders = dersEslestir(dersKelimeleri);
+  const ders = dersEslestir(dersKelimeleri, aliasListesi);
   return ders ? { ders, alan } : null;
 }
 function noKolonuMu(baslik) {
@@ -8983,7 +9479,7 @@ async function optikPdfDenemesiOku(dosya, soruSayilari, baslikAciklama) {
 // istekte yanıt sınırı aşılmasın diye metin satır bazlı, küçük bir örtüşmeyle (bir öğrenci kaydının
 // parça sınırında ikiye bölünmesini önlemek için) parçalara ayrılır; parçalar arasında örtüşmeden
 // doğan olası tekrarlar aynı okul numarası (yoksa aynı ad) bazında elenir.
-async function pdfNetListesiAIIleAyristir(pdfMetin, dersSirasi, ilerlemeBildir) {
+async function pdfNetListesiAIIleAyristir(pdfMetin, dersSirasi, dersSoru = DERS_SORU, ilerlemeBildir) {
   const satirlar = pdfMetin.split("\n");
   const PARCA_SATIR = 60, ORTUSME = 4;
   const parcalar = [];
@@ -8995,7 +9491,7 @@ async function pdfNetListesiAIIleAyristir(pdfMetin, dersSirasi, ilerlemeBildir) 
   if (parcalar.length === 0) return [];
 
   const kullanilacakDersler = (dersSirasi && dersSirasi.length ? dersSirasi : DERSLER);
-  const dersAciklama = kullanilacakDersler.map((d) => `- ${d}: ${DERS_SORU[d] || 20} soru`).join("\n");
+  const dersAciklama = kullanilacakDersler.map((d) => `- ${d}: ${dersSoru[d] || 20} soru`).join("\n");
 
   const tumKayitlar = [];
   const gorulenNo = new Set();
@@ -9051,7 +9547,7 @@ ${parcalar[p]}`;
         if (d === 0 && y === 0 && kayit.dogru == null && kayit.yanlis == null) return;
         dersSonuc[ders] = { dogru: d, yanlis: y };
       });
-      const dogrulamaUyarisi = dersSonucDogrula(dersSonuc);
+      const dogrulamaUyarisi = dersSonucDogrula(dersSonuc, dersSoru);
       const puan = o.puan != null && !isNaN(Number(o.puan)) ? Number(o.puan) : null;
       tumKayitlar.push({ no, ad, sinif, dersSonuc, uyari: dogrulamaUyarisi, gecersiz: !!dogrulamaUyarisi, puan });
     });
@@ -9082,12 +9578,12 @@ function basliklarSatiriBul(aoa) {
 // bulmak için üst satırda O SÜTUNDAN SOLA DOĞRU EN YAKIN DOLU HÜCREYİ kullanırız. Bu adım atlanırsa,
 // "D"/"Y" tek başına hiçbir derse bağlanamadığı için o dersin sütunları hiç eşleşmez (sonuç: o ders
 // hep boş/0 görünür).
-function excelKolonlariEsle(basliklar, ustSatir) {
+function excelKolonlariEsle(basliklar, ustSatir, dersler = DERSLER, aliasListesi = ALIAS_LISTESI_UZUNA_GORE) {
   const noIdx = basliklar.findIndex((b) => noKolonuMu(b));
   const adIdx = basliklar.findIndex((b) => adKolonuMu(b));
   const puanIdx = basliklar.findIndex((b) => puanKolonuMu(b));
   const dersMap = {};
-  DERSLER.forEach((d) => { dersMap[d] = { dogru: -1, yanlis: -1 }; });
+  dersler.forEach((d) => { dersMap[d] = { dogru: -1, yanlis: -1 }; });
   let sonDoluUst = "";
   const ustDersHucre = (basliklar || []).map((_, i) => {
     const deger = String((ustSatir || [])[i] ?? "").trim();
@@ -9095,13 +9591,13 @@ function excelKolonlariEsle(basliklar, ustSatir) {
     return sonDoluUst;
   });
   basliklar.forEach((b, i) => {
-    let sonuc = kolonAyristir(b);
+    let sonuc = kolonAyristir(b, aliasListesi);
     if (!sonuc && ustSatir) {
       const parcalar = String(b || "").trim().split(/[\s._/-]+/).filter(Boolean);
       const son = parcalar.length ? normalizeTr(parcalar[parcalar.length - 1]) : "";
       const alan = ["d", "dogru"].includes(son) ? "dogru" : (["y", "yanlis"].includes(son) ? "yanlis" : null);
       if (alan && ustDersHucre[i]) {
-        const ders = dersEslestir([ustDersHucre[i]]);
+        const ders = dersEslestir([ustDersHucre[i]], aliasListesi);
         if (ders) sonuc = { ders, alan };
       }
     }
@@ -9122,8 +9618,8 @@ function excelKolonlariEsle(basliklar, ustSatir) {
 // yapılmazsa (eski davranış: sayılar satırda göründükleri SIRAYLA derslere bölüştürülüyordu), bir
 // ders atlandığında ondan SONRAKİ TÜM dersler bir kayar ve imkânsız net değerleri (ör. 90 soruluk
 // denemeden 100 net) ortaya çıkar — bildirilen hatanın kök nedeni buydu.
-function dersSutunSinirlariniBul(satirlarObj) {
-  const gerekliUzunluk = DERSLER.length * 3;
+function dersSutunSinirlariniBul(satirlarObj, dersSayisi = DERSLER.length) {
+  const gerekliUzunluk = dersSayisi * 3;
   let enIyi = null;
   for (const { parcalar } of satirlarObj) {
     if (!parcalar || parcalar.length < gerekliUzunluk) continue;
@@ -9183,7 +9679,8 @@ function satirNumaralariniHizala(parcalarHam, satirMetni, capalar) {
     }
   }
   const yeniSayilar = [];
-  for (let d = 0; d < DERSLER.length; d++) {
+  const dersSayisi = Math.round(capalar.length / 3);
+  for (let d = 0; d < dersSayisi; d++) {
     const D = cevaplar[d * 3], Y = cevaplar[d * 3 + 1];
     if (D != null && Y != null) yeniSayilar.push(D, Y);
     else yeniSayilar.push("0", "0");
@@ -9207,8 +9704,8 @@ function satirNumaralariniHizala(parcalarHam, satirMetni, capalar) {
 // dersi boş bırakılmamış, dolayısıyla sütunları kaymamış satırları) bulur ve bunlardan birinin sayı
 // x-konumlarını ders sütunu çapası olarak kullanır. Aynı tablodaki tüm satırlarda sütunların x-konumu
 // sabit olduğundan, bu çapalar diğer (bir dersi boş bırakılmış) satırları da doğru hizalamaya yeter.
-function dersSutunSinirlariniBulVeriden(satirlarObj) {
-  const gerekliUzunluk = DERSLER.length * 3;
+function dersSutunSinirlariniBulVeriden(satirlarObj, dersSayisi = DERSLER.length) {
+  const gerekliUzunluk = dersSayisi * 3;
   const adaylar = [];
   satirlarObj.forEach(({ parcalar }) => {
     if (!parcalar || !parcalar.length) return;
@@ -9352,20 +9849,20 @@ function satirlariKaynastir(satirlarObjHam) {
 // sayıda dersi tek kelimeyle (ör. "Türkçe", "SOSYAL", "Din", "İngilizce", "Matematik", "Fen") tanıyan
 // satırı bulur ve derslerin o satırdaki soldan sağa görülme sırasını döndürür. Yeterli eşleşme
 // bulunamazsa DERSLER'deki varsayılan sırayı kullanır.
-function pdfDersSirasiBul(satirlar) {
+function pdfDersSirasiBul(satirlar, dersler = DERSLER, aliasListesi = ALIAS_LISTESI_UZUNA_GORE) {
   let enIyiSira = null, enIyiSkor = 0;
   for (const satir of satirlar) {
     const kelimeler = satir.trim().split(/\s+/).filter(Boolean);
     if (kelimeler.length < 2 || kelimeler.length > 20) continue;
     const bulunanlar = [];
     kelimeler.forEach((k) => {
-      const ders = dersEslestir([k]);
+      const ders = dersEslestir([k], aliasListesi);
       if (ders && !bulunanlar.includes(ders)) bulunanlar.push(ders);
     });
     if (bulunanlar.length > enIyiSkor) { enIyiSkor = bulunanlar.length; enIyiSira = bulunanlar; }
-    if (enIyiSkor === DERSLER.length) break;
+    if (enIyiSkor === dersler.length) break;
   }
-  return enIyiSkor >= 3 ? enIyiSira : DERSLER.slice();
+  return enIyiSkor >= 3 ? enIyiSira : dersler.slice();
 }
 // SON ÇARE: sayfa üzerinde tek bir "tam" (hiçbir dersi boş bırakılmamış) satır bile bulunamadığında
 // (dersSutunSinirlariniBul VE dersSutunSinirlariniBulVeriden ikisi de null döndüğünde, ör. tüm
@@ -9381,13 +9878,13 @@ function pdfDersSirasiBul(satirlar) {
 // ders(ler)in boş olduğu KESİN olarak belirlenebiliyorsa) sonuç döndürülür — birden fazla yerleşim de
 // geçerliyse (hangi ders(ler) boş belirsizse) null döner, böylece belirsiz bir tahminle yanlış veri
 // üretmek yerine satır "eksik" olarak işaretlenip öğretmenin metin kutusundan elle düzeltmesi istenir.
-function dersDegerleriTahminEt(hamSayilar, dersSirasi) {
+function dersDegerleriTahminEt(hamSayilar, dersSirasi, dersSoru = DERS_SORU) {
   const n = dersSirasi.length;
   const sayilar = hamSayilar.map((s) => Number(String(s).replace(",", ".")));
   const TOLERANS_NET = 0.06, TOLERANS_TOPLAM = 0.6, TOLERANS_TOPLAM_NET = 0.15;
   const ucluGecerliMi = (d, y, net, ders) => {
     if (!(d >= 0) || !(y >= 0)) return false;
-    const soru = DERS_SORU[ders];
+    const soru = dersSoru[ders];
     if (soru != null && d + y > soru + 1e-9) return false;
     return Math.abs(netHesapla(d, y) - net) <= TOLERANS_NET;
   };
@@ -9481,7 +9978,7 @@ const OGRENCI_SATIRI_SINIFSIZ_REGEX = /^\*?\s*(\d{1,4})\s+(?:([\d*]{1,6})\s+)?([
 // Verilen ders-verisi metnini (§KUYRUK§ ayracı olmayan durum için) çözüp {dersSonuc, uyari, puan,
 // gecersiz} döndürür. pdfSatirAyristir'ın hem doğrudan hem de "sınıf harfi eksik, belki baştaki rakam
 // sınıfın kendisi" alternatif yorumunu denerken TEKRAR kullanabilmesi için ayrı bir fonksiyona alındı.
-function dersVeriyiCoz(veriStr, dersSirasi) {
+function dersVeriyiCoz(veriStr, dersSirasi, dersSoru = DERS_SORU) {
   const dersSonuc = {};
   let uyari = "";
   let puan = null;
@@ -9492,7 +9989,7 @@ function dersVeriyiCoz(veriStr, dersSirasi) {
   // derslerin D/Y çiftleri bir kayarak KARIŞIR.
   const hamSayilar = sayiKismiTemiz.match(/-?\d+(?:[.,]\d+)?/g) || [];
   const sayilar = hamSayilar.map((s) => Number(s.replace(",", ".")));
-  const tahmin = dersDegerleriTahminEt(hamSayilar, dersSirasi);
+  const tahmin = dersDegerleriTahminEt(hamSayilar, dersSirasi, dersSoru);
   if (tahmin) {
     dersSirasi.forEach((ders, i) => {
       dersSonuc[ders] = { dogru: tahmin.degerler[i * 3] ?? 0, yanlis: tahmin.degerler[i * 3 + 1] ?? 0 };
@@ -9515,11 +10012,46 @@ function dersVeriyiCoz(veriStr, dersSirasi) {
   } else {
     uyari = `${sayilar.length} sayı bulundu, en az ${dersSirasi.length * 2} bekleniyordu`;
   }
-  const dogrulamaUyarisi = dersSonucDogrula(dersSonuc);
+  const dogrulamaUyarisi = dersSonucDogrula(dersSonuc, dersSoru);
   if (dogrulamaUyarisi) uyari = uyari ? `${uyari} · ${dogrulamaUyarisi}` : dogrulamaUyarisi;
   return { dersSonuc, uyari, puan, gecersiz: !!dogrulamaUyarisi };
 }
-function pdfSatirAyristir(satir, dersSirasi) {
+// Bir veri metninde (dersVeriyiCoz'a verilecek "veriStr") baştan itibaren "n" ADET sayıyı (rakam
+// grubunu) atlayıp geri kalan metni döndürür — sınıf bilgisinin bir/iki fazladan sayı olarak (harf
+// yerine rakam OKUNMASI yüzünden) ders verisinin BAŞINA karışmış olabileceği durumlarda, o fazladan
+// sayı(ları) atıp geri kalanı yeniden ayrıştırabilmek için kullanılır (bkz. sinifOkunamayanSatiriYenidenCoz).
+// Metinde en az n sayı yoksa (bu kadar atlanamıyorsa) null döner.
+function veriStrdenIlkNSayiSonrasiniAl(veriStr, n) {
+  const temiz = veriStr.replace(/(^|\s)[-*]+(?=\s|$)/g, "$10");
+  if (n <= 0) return temiz;
+  const regex = /-?\d+(?:[.,]\d+)?/g;
+  let m, sayac = 0, sonIndex = -1;
+  while ((m = regex.exec(temiz)) !== null) {
+    sayac++;
+    if (sayac === n) { sonIndex = m.index + m[0].length; break; }
+  }
+  return sayac >= n ? temiz.slice(sonIndex) : null;
+}
+// Sınıfı okunamadığı (sinifSorunu:true) için ders sayıları da muhtemelen bozuk görünen bir satırı,
+// öğretmen önizlemede o satırın gerçek şubesini elle işaretlediğinde yeniden ayrıştırmayı dener.
+// Sınıf harfi bazen bir rakam gibi yanlış okunduğu için (ör. "8 / A" yerine "0 / 0"), ders verisinin
+// BAŞINDA 0, 1 ya da 2 tane FAZLADAN sayı kalmış olabilir — sırasıyla 0, 1, 2, 3 sayı atlanarak
+// dersVeriyiCoz'a verilir; hangi atlama sayısı geçerli (soru sayısını aşmayan) bir sonuç üretiyorsa o
+// kullanılır. §KUYRUK§ ayraçlı satırlarda sütun konumları zaten kesin olarak çözülmüş olduğundan bu
+// yeniden deneme uygulanmaz (null döner, satır olduğu gibi kalır).
+function sinifOkunamayanSatiriYenidenCoz(hamVeriStr, dersSirasi, dersSoru) {
+  if (!hamVeriStr || hamVeriStr.indexOf("§KUYRUK§") !== -1) return null;
+  for (let atla = 0; atla <= 3; atla++) {
+    const altMetin = veriStrdenIlkNSayiSonrasiniAl(hamVeriStr, atla);
+    if (altMetin == null) break;
+    const sonuc = dersVeriyiCoz(altMetin, dersSirasi, dersSoru);
+    if (!sonuc.gecersiz && Object.keys(sonuc.dersSonuc).length > 0) {
+      return { dersSonuc: sonuc.dersSonuc, puan: sonuc.puan, uyari: sonuc.uyari, gecersiz: false };
+    }
+  }
+  return null;
+}
+function pdfSatirAyristir(satir, dersSirasi, dersSoru = DERS_SORU) {
   let m = satir.match(OGRENCI_SATIRI_REGEX);
   let sinifEksik = false;
   if (!m) {
@@ -9553,11 +10085,11 @@ function pdfSatirAyristir(satir, dersSirasi) {
       || kuyrukSayilari.find((s) => /^-?\d+,\d{3}$/.test(s))
       || kuyrukSayilari.find((s) => /[.,]/.test(s));
     const puan = puanToken ? Number(puanToken.replace(",", ".")) : null;
-    const dogrulamaUyarisi = dersSonucDogrula(dersSonuc);
+    const dogrulamaUyarisi = dersSonucDogrula(dersSonuc, dersSoru);
     if (dogrulamaUyarisi) uyari = uyari ? `${uyari} · ${dogrulamaUyarisi}` : dogrulamaUyarisi;
-    return { no, ad, sinif, dersSonuc, uyari, gecersiz: !!dogrulamaUyarisi, sinifSorunu: sinifEksik, puan };
+    return { no, ad, sinif, dersSonuc, uyari, gecersiz: !!dogrulamaUyarisi, sinifSorunu: sinifEksik, puan, hamVeriStr: veriStr };
   }
-  let sonuc = dersVeriyiCoz(veriStr, dersSirasi);
+  let sonuc = dersVeriyiCoz(veriStr, dersSirasi, dersSoru);
   // Bazı raporlarda sınıf HARFİ basılmamış olsa da GRUP RAKAMI (ör. "7A" yerine yalnızca "7") yazılı
   // olabilir — bu durumda rakam veri akışının BAŞINDA fazladan bir sayı olarak kalır ve tüm ders
   // sayıları bir kayar (ör. "NECAT KORKUT 7 12 7 9,67..." → "7" aslında sınıf, "12 7 9,67..." asıl
@@ -9568,7 +10100,7 @@ function pdfSatirAyristir(satir, dersSirasi) {
   if (sinifEksik) {
     const ilkTokenEslesme = veriStr.trim().match(/^(\d{1,2})\s+(.+)$/);
     if (ilkTokenEslesme) {
-      const alternatif = dersVeriyiCoz(ilkTokenEslesme[2], dersSirasi);
+      const alternatif = dersVeriyiCoz(ilkTokenEslesme[2], dersSirasi, dersSoru);
       if (!alternatif.gecersiz && sonuc.gecersiz) {
         sonuc = alternatif;
         sinif = ilkTokenEslesme[1];
@@ -9585,7 +10117,7 @@ function pdfSatirAyristir(satir, dersSirasi) {
   // engellenmemesi gerekir — bkz. kaydet/kaydedilecekSayisi'ndeki "(!r.gecersiz || (r.sinifSorunu &&
   // r.ogrenciId))" kontrolü. Sınıfla İLGİSİZ bir ders-verisi bozukluğu (sinifSorunu:false) ise kayıt
   // yine engellenir — çünkü o durumda sorunun kaynağı belirsizdir ve veri gerçekten yanlış olabilir.
-  return { no, ad, sinif, dersSonuc: sonuc.dersSonuc, uyari, gecersiz: sonuc.gecersiz, sinifSorunu: sinifEksik, puan: sonuc.puan };
+  return { no, ad, sinif, dersSonuc: sonuc.dersSonuc, uyari, gecersiz: sonuc.gecersiz, sinifSorunu: sinifEksik, puan: sonuc.puan, hamVeriStr: veriStr };
 }
 
 // Bazı raporlarda (ör. "Fenomen Okul" İlçe/Genel sıralama listeleri) her öğrenci kaydı TEK satıra
@@ -9597,7 +10129,7 @@ function pdfSatirAyristir(satir, dersSirasi) {
 // kullanılır, böylece "Toplam", "LGS Puanı" ve sıralama sütunlarındaki fazladan sayılar sorun
 // yaratmaz (pdfSatirAyristir zaten yalnızca ilk dersSirasi.length*3 sayıyı kullanır).
 const COK_SATIRLI_KAYIT_REGEX = /(\d{1,6})\s*-\s*([A-ZÇĞİÖŞÜ][^/]*?)(\d{1,2})\s*\/\s*([A-ZÇĞİÖŞÜ]\d{0,2})\s+([\d.,\s-]+?)(?=\d{1,6}\s*-\s*[A-ZÇĞİÖŞÜ]|$)/g;
-function pdfCokSatirliKayitlariAyikla(satirlar, dersSirasi) {
+function pdfCokSatirliKayitlariAyikla(satirlar, dersSirasi, dersSoru = DERS_SORU) {
   const tumMetin = (satirlar || []).join(" ");
   const sonuclar = [];
   let m;
@@ -9628,7 +10160,7 @@ function pdfCokSatirliKayitlariAyikla(satirlar, dersSirasi) {
       || kuyrukSayilari.find((s) => /[.,]/.test(s));
       if (puanToken) puan = Number(puanToken.replace(",", "."));
     }
-    const tahmin = ayracIdx !== -1 ? null : dersDegerleriTahminEt(hamSayilar, dersSirasi);
+    const tahmin = ayracIdx !== -1 ? null : dersDegerleriTahminEt(hamSayilar, dersSirasi, dersSoru);
     if (tahmin) {
       dersSirasi.forEach((ders, i) => {
         dersSonuc[ders] = { dogru: tahmin.degerler[i * 3] ?? 0, yanlis: tahmin.degerler[i * 3 + 1] ?? 0 };
@@ -9648,7 +10180,7 @@ function pdfCokSatirliKayitlariAyikla(satirlar, dersSirasi) {
     } else if (ayracIdx === -1) {
       uyari = `${sayilar.length} sayı bulundu, en az ${dersSirasi.length * 2} bekleniyordu`;
     }
-    const dogrulamaUyarisi = dersSonucDogrula(dersSonuc);
+    const dogrulamaUyarisi = dersSonucDogrula(dersSonuc, dersSoru);
     if (dogrulamaUyarisi) uyari = uyari ? `${uyari} · ${dogrulamaUyarisi}` : dogrulamaUyarisi;
     if (no && ad) sonuclar.push({ no, ad, sinif, dersSonuc, uyari, gecersiz: !!dogrulamaUyarisi, puan });
   }
@@ -9658,7 +10190,157 @@ function pdfCokSatirliKayitlariAyikla(satirlar, dersSirasi) {
 // PDF ya da Excel dosyasından deneme sonuçlarını okuyup, o an giriş yapılmış okulun (Ana Kullanıcının)
 // verisine kaydeden ekran. Her okul kendi hesabıyla giriş yaptığı için, buradan yüklenen sonuçlar
 // otomatik olarak sadece o okulun verisine işlenir — başka bir okulun verisi hiç görülmez/etkilenmez.
-function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, updateDenemeSonuclari, updateDenemeler, denemeEkBilgi, updateDenemeEkBilgi, plan, telegramKullaniciAdi, siniflar = SINIFLAR }) {
+// Bir deneme + sınıf seviyesi kombinasyonu için hangi derslerin sorulduğunu ve her dersten kaç soru
+// olduğunu düzenlemeye yarayan pencere (bkz. DenemeIceAktar'daki "Ders Ayarları" butonu). Kaydedilen
+// ayar deneme.dersAyarlari[seviye] içine yazılır; bkz. denemeDersBilgisi. Ayarlanmayan deneme/seviye
+// kombinasyonları standart LGS ders/soru listesiyle (DERSLER/DERS_SORU) çalışmaya devam eder, bu yüzden
+// bu özellik eskiden oluşturulmuş hiçbir denemeyi bozmaz.
+function DenemeDersAyarlariModal({ denemeler, updateDenemeler, siniflar, baslangicDenemeId, baslangicSeviye, onClose }) {
+  const seviyeler = useMemo(() => {
+    const set = new Set();
+    (siniflar || []).forEach((s) => { const sv = sinifSeviyesiCikar(s); if (sv) set.add(sv); });
+    return Array.from(set).sort((a, b) => Number(a) - Number(b));
+  }, [siniflar]);
+
+  const [denemeId, setDenemeId] = useState(baslangicDenemeId || denemeler[0]?.id || "");
+  const [seviye, setSeviye] = useState(baslangicSeviye || seviyeler[0] || "");
+  const deneme = denemeler.find((d) => d.id === denemeId) || null;
+
+  // Düzenlenen satırlar: [{ders, soru}]. Deneme/seviye seçimi değiştiğinde, o kombinasyonun kayıtlı
+  // özel ayarı varsa ona, yoksa standart LGS listesine göre sıfırlanır.
+  const [satirlar, setSatirlar] = useState(() => {
+    const baslangicDeneme = denemeler.find((d) => d.id === (baslangicDenemeId || denemeler[0]?.id));
+    const ozel = baslangicDeneme?.dersAyarlari?.[baslangicSeviye];
+    if (ozel && ozel.dersler && ozel.dersler.length) {
+      return ozel.dersler.map((d) => ({ ders: d, soru: ozel.dersSoru?.[d] ?? "" }));
+    }
+    return DERSLER.map((d) => ({ ders: d, soru: DERS_SORU[d] }));
+  });
+  const [hata, setHata] = useState("");
+  const [basari, setBasari] = useState("");
+
+  const denemeSeviyeDegistir = (yeniDenemeId, yeniSeviye) => {
+    setDenemeId(yeniDenemeId);
+    setSeviye(yeniSeviye);
+    setHata("");
+    setBasari("");
+    const hedefDeneme = denemeler.find((d) => d.id === yeniDenemeId);
+    const ozel = hedefDeneme?.dersAyarlari?.[yeniSeviye];
+    if (ozel && ozel.dersler && ozel.dersler.length) {
+      setSatirlar(ozel.dersler.map((d) => ({ ders: d, soru: ozel.dersSoru?.[d] ?? "" })));
+    } else {
+      setSatirlar(DERSLER.map((d) => ({ ders: d, soru: DERS_SORU[d] })));
+    }
+  };
+
+  const satirGuncelle = (i, alan, deger) => setSatirlar((prev) => prev.map((s, idx) => (idx === i ? { ...s, [alan]: deger } : s)));
+  const satirSil = (i) => setSatirlar((prev) => prev.filter((_, idx) => idx !== i));
+  const satirEkle = () => setSatirlar((prev) => [...prev, { ders: "", soru: "" }]);
+  const varsayilaniYukle = () => setSatirlar(DERSLER.map((d) => ({ ders: d, soru: DERS_SORU[d] })));
+
+  const kaydet = () => {
+    if (!denemeId) { setHata("Lütfen bir deneme seçin."); return; }
+    if (!seviye) { setHata("Lütfen bir sınıf seviyesi seçin (Öğrenciler sekmesinde bu seviyede kayıtlı bir sınıf olması gerekir, ör. \"9-A\")."); return; }
+    const temiz = satirlar.map((s) => ({ ders: (s.ders || "").trim(), soru: Number(s.soru) })).filter((s) => s.ders);
+    if (!temiz.length) { setHata("En az bir ders eklemelisiniz."); return; }
+    if (temiz.some((s) => !s.soru || s.soru <= 0)) { setHata("Her dersin soru sayısı 0'dan büyük bir sayı olmalı."); return; }
+    const adlar = temiz.map((s) => s.ders.toLocaleUpperCase("tr-TR"));
+    if (new Set(adlar).size !== adlar.length) { setHata("Aynı ders adını birden fazla kez ekleyemezsiniz."); return; }
+
+    const dersler = temiz.map((s) => s.ders);
+    const dersSoru = {};
+    temiz.forEach((s) => { dersSoru[s.ders] = s.soru; });
+
+    updateDenemeler(denemeler.map((d) => (d.id === denemeId
+      ? { ...d, dersAyarlari: { ...(d.dersAyarlari || {}), [seviye]: { dersler, dersSoru } } }
+      : d)));
+    setHata("");
+    setBasari("Kaydedildi. Bu deneme ve sınıf seviyesi için PDF/Excel içe aktarımı artık bu derslere ve soru sayılarına göre okunacak.");
+  };
+
+  const varsayilanaDondur = () => {
+    if (!deneme || !deneme.dersAyarlari || !deneme.dersAyarlari[seviye]) { setSatirlar(DERSLER.map((d) => ({ ders: d, soru: DERS_SORU[d] }))); return; }
+    const guncelAyarlar = { ...deneme.dersAyarlari };
+    delete guncelAyarlar[seviye];
+    updateDenemeler(denemeler.map((d) => (d.id === denemeId ? { ...d, dersAyarlari: guncelAyarlar } : d)));
+    setSatirlar(DERSLER.map((d) => ({ ders: d, soru: DERS_SORU[d] })));
+    setHata("");
+    setBasari("Bu seviye için özel ayar kaldırıldı, standart LGS listesine dönüldü.");
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.5)" }}>
+      <div className="w-full max-w-lg rounded-2xl overflow-hidden max-h-[90vh] flex flex-col" style={{ background: SURFACE }}>
+        <div className="flex items-center justify-between px-5 py-4 shrink-0" style={{ borderBottom: `1px solid ${BORDER}` }}>
+          <h3 className="font-display text-base font-medium flex items-center gap-2"><IconEdit size={18} color={BLUE} />Ders Ayarları</h3>
+          <button onClick={onClose} className="p-1"><IconX size={18} color={SUBTLE} /></button>
+        </div>
+        <div className="px-5 py-4 overflow-y-auto">
+          <p className="text-xs mb-4" style={{ color: SUBTLE }}>
+            Bir denemede, bir sınıf seviyesinde hangi derslerin sorulduğunu ve her dersten kaç soru olduğunu
+            burada özelleştirebilirsiniz — ör. 5. sınıflarda Türkçe'den 20 yerine 15 soru, ya da 9. sınıflarda
+            Türkçe yerine Edebiyat dersi gibi. Bu ayar sadece seçtiğiniz deneme + sınıf seviyesi için geçerlidir
+            ve o dosyayı PDF/Excel'den içe aktarırken kullanılır. Ayarlamadığınız deneme/seviyeler standart LGS
+            listesiyle (Türkçe, Sosyal Bilgiler, Din Kültürü ve Ahlak Bilgisi, İngilizce, Matematik, Fen Bilimleri)
+            çalışmaya devam eder.
+          </p>
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            <div>
+              <label className="text-[11px] font-medium block mb-1" style={{ color: SUBTLE }}>Deneme</label>
+              <GoogleSelect value={denemeId} onChange={(e) => denemeSeviyeDegistir(e.target.value, seviye)} className="w-full">
+                {denemeler.length === 0 && <option value="">Önce bir deneme oluşturun</option>}
+                {denemeler.map((d) => <option key={d.id} value={d.id}>{d.ad}</option>)}
+              </GoogleSelect>
+            </div>
+            <div>
+              <label className="text-[11px] font-medium block mb-1" style={{ color: SUBTLE }}>Sınıf Seviyesi</label>
+              <GoogleSelect value={seviye} onChange={(e) => denemeSeviyeDegistir(denemeId, e.target.value)} className="w-full">
+                {seviyeler.length === 0 && <option value="">—</option>}
+                {seviyeler.map((sv) => <option key={sv} value={sv}>{sv}. sınıf</option>)}
+              </GoogleSelect>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 mb-3">
+            {satirlar.map((s, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <GoogleInput value={s.ders} onChange={(e) => satirGuncelle(i, "ders", e.target.value)}
+                  placeholder="Ders adı (ör. Edebiyat)" className="flex-1" />
+                <GoogleInput type="number" min="1" value={s.soru} onChange={(e) => satirGuncelle(i, "soru", e.target.value)}
+                  placeholder="Soru sayısı" className="w-28" />
+                <button type="button" onClick={() => satirSil(i)} className="p-1.5 shrink-0"><IconTrash size={15} color={RED} /></button>
+              </div>
+            ))}
+            {satirlar.length === 0 && <p className="text-xs" style={{ color: SUBTLE }}>Henüz ders eklenmedi.</p>}
+          </div>
+          <div className="flex items-center gap-2 mb-4">
+            <button type="button" onClick={satirEkle} className="px-3 py-1.5 rounded-full text-xs font-medium border" style={{ borderColor: BORDER }}>
+              <IconPlus size={12} style={{ display: "inline-block", marginRight: 4, verticalAlign: "-1px" }} />Ders Ekle
+            </button>
+            <button type="button" onClick={varsayilaniYukle} className="px-3 py-1.5 rounded-full text-xs font-medium" style={{ color: SUBTLE }}>
+              Varsayılan LGS listesini yükle
+            </button>
+          </div>
+
+          {hata && <p className="text-xs mb-2" style={{ color: RED }}>{hata}</p>}
+          {basari && <p className="text-xs mb-2" style={{ color: GREEN }}>{basari}</p>}
+
+          <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
+            <button type="button" onClick={varsayilanaDondur} className="text-xs font-medium underline" style={{ color: SUBTLE }}>
+              Bu seviye için özel ayarı kaldır (varsayılana dön)
+            </button>
+            <div className="flex items-center gap-2">
+              <button onClick={onClose} className="px-4 py-2 rounded-full text-sm font-medium" style={{ color: SUBTLE }}>Kapat</button>
+              <button onClick={kaydet} className="px-4 py-2 rounded-full text-sm font-medium text-white" style={{ background: BLUE }}>Kaydet</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, updateDenemeSonuclari, updateDenemeler, denemeEkBilgi, updateDenemeEkBilgi, plan, telegramKullaniciAdi, siniflar = SINIFLAR, setAltSekme, setDenemeSecili }) {
   const [tur, setTur] = useState(null); // "excel" | "pdf"
   const [dosyaAdi, setDosyaAdi] = useState("");
   const [yukleniyor, setYukleniyor] = useState(false);
@@ -9675,18 +10357,88 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
   const [hedefSinif, setHedefSinif] = useState(siniflar[0] || "");
   const [aiYukleniyor, setAiYukleniyor] = useState(false);
   const [aiIlerleme, setAiIlerleme] = useState("");
+  const [dersAyarlariAcik, setDersAyarlariAcik] = useState(false);
+  // Önizleme oluştururken tespit edilen ders sırası burada saklanır — önizlemedeki "Sınıf" seçicisinden
+  // bir şube işaretlendiğinde, sınıfın yanlış okunması yüzünden kaymış ders sayılarını yeniden
+  // ayrıştırabilmek için (bkz. sinifSecildi) gerekir.
+  const [sonDersSirasi, setSonDersSirasi] = useState(null);
 
   useEffect(() => { if (!hedefDenemeId && denemeler.length) setHedefDenemeId(denemeler[0].id); }, [denemeler]);
 
-  // Okul numarasına göre öğrenci eşleştirme haritası: numara benzersizse eşleşir, tekrarlıysa atlanır
-  // (mevcut 3./6. Deneme otomatik eşleştirme mantığıyla aynı yaklaşım).
+  // Bu içe aktarımın hangi sınıf seviyesi için yapıldığı: seçili denemenin bu seviyeye özel
+  // "Ders Ayarları" (bkz. DenemeDersAyarlariModal) varsa PDF/Excel o derslere ve soru sayılarına göre
+  // okunur; yoksa standart LGS ders/soru listesine (DERSLER/DERS_SORU) geri düşülür. Bir PDF/Excel
+  // dosyası pratikte hep TEK bir sınıf seviyesinin sonuçlarını içerdiğinden (ör. yalnızca 9. sınıflar),
+  // bu tek seçim o dosyanın tamamı için geçerli olur.
+  const seviyeler = useMemo(() => {
+    const set = new Set();
+    (siniflar || []).forEach((s) => { const sv = sinifSeviyesiCikar(s); if (sv) set.add(sv); });
+    return Array.from(set).sort((a, b) => Number(a) - Number(b));
+  }, [siniflar]);
+  const [seviye, setSeviye] = useState("");
+  useEffect(() => { if (!seviye && seviyeler.length) setSeviye(seviyeler[0]); }, [seviyeler]);
+  const aktifDeneme = denemeler.find((d) => d.id === hedefDenemeId) || null;
+  const { dersler: aktifDersler, dersSoru: aktifDersSoru } = useMemo(
+    () => denemeDersBilgisi(aktifDeneme, seviye),
+    [aktifDeneme, seviye]
+  );
+  const aktifAliasListesi = useMemo(() => aliasListesiUret(aktifDersler), [aktifDersler]);
+
+  // Okul numarasına göre öğrenci eşleştirme haritası: numara (baştaki sıfırlar yok sayılarak, bkz.
+  // noNormallestir) benzersizse eşleşir, tekrarlıysa atlanır (mevcut 3./6. Deneme otomatik eşleştirme
+  // mantığıyla aynı yaklaşım).
   const noHaritasi = useMemo(() => {
     const sayac = {};
-    students.forEach((s) => { if (s.no && s.no !== "0") sayac[s.no] = (sayac[s.no] || 0) + 1; });
+    students.forEach((s) => { const no = noNormallestir(s.no); if (no !== "0") sayac[no] = (sayac[no] || 0) + 1; });
     const harita = {};
-    students.forEach((s) => { if (s.no && s.no !== "0" && sayac[s.no] === 1) harita[s.no] = s.id; });
+    students.forEach((s) => { const no = noNormallestir(s.no); if (no !== "0" && sayac[no] === 1) harita[no] = s.id; });
     return harita;
   }, [students]);
+  // Ada göre öğrenci eşleştirme haritası (bkz. adNormallestir) — bazı raporlarda (ör. sınıfa göre değil
+  // SIRALAMAYA göre listelenen, okul numarasını hiç yazmayan ya da numaraları PDF'ten güvenilmez okunan
+  // denemeler) okul numarasıyla eşleştirme hiç çalışmaz ve öğrenci sistemde zaten kayıtlı olsa bile
+  // "eşleşmedi" görünüp "otomatik oluştur" açıkken YANLIŞLIKLA hedef şubeye yeni kayıt olarak eklenir.
+  // Ad benzersizse (okulda aynı ad+soyada sahip başka öğrenci yoksa) bu satırları ada bakarak da
+  // eşleştirip öğrencinin GERÇEK/kendi şubesine (var olan kaydına) yönlendiriyoruz — no eşleşmesiyle
+  // aynı "benzersizse eşleş, tekrarlıysa atla" mantığı.
+  const adHaritasi = useMemo(() => {
+    const sayac = {};
+    students.forEach((s) => { const ad = adNormallestir(s.ad); if (ad) sayac[ad] = (sayac[ad] || 0) + 1; });
+    const harita = {};
+    students.forEach((s) => { const ad = adNormallestir(s.ad); if (ad && sayac[ad] === 1) harita[ad] = s.id; });
+    return harita;
+  }, [students]);
+  // İçe aktarılan bir satırı sistemdeki öğrenciyle eşleştirir: önce okul numarasına (baştaki sıfırlar
+  // yok sayılarak — bkz. noNormallestir — çünkü aynı öğrenci bazen elle "247", bazen PDF içe
+  // aktarımıyla "00247" olarak kayıtlı olabilir; en güvenilir alan budur, İSİM YANLIŞ/EKSİK YAZILMIŞ
+  // OLSA BİLE numara doğruysa buradan eşleşir), sonra ADIN TAMAMEN AYNI yazıldığı durumlara, son olarak
+  // da SOYADI TAM aynı olup ön adı sadece BENZER yazılmış (ör. bir denemede "Semanur Biçen", başka bir
+  // denemede "Sema Biçen" — kısaltılmış/takma ad ya da eksik yazım) satırlara bakar. Bu son adım
+  // yalnızca aynı soyada sahip TEK bir öğrenci bulunduğunda (belirsizlik yoksa) eşleştirir — okuldaki
+  // iki farklı öğrenci aynı soyadı taşıyorsa (ör. kardeşler), riskli olacağından hiçbirini otomatik
+  // eşleştirmez, öğretmenin elle seçmesi istenir.
+  const ogrenciEslestir = (no, ad) => {
+    const noKey = noNormallestir(no);
+    if (noKey !== "0" && noHaritasi[noKey]) return noHaritasi[noKey];
+    const adKey = adNormallestir(ad);
+    if (adKey && adHaritasi[adKey]) return adHaritasi[adKey];
+    if (adKey) {
+      const kelimeler = adKey.split(" ");
+      if (kelimeler.length >= 2) {
+        const soyad = kelimeler[kelimeler.length - 1];
+        const onAd = kelimeler.slice(0, -1).join(" ");
+        const adaylar = students.filter((s) => {
+          const sKelimeler = adNormallestir(s.ad).split(" ");
+          if (sKelimeler.length < 2) return false;
+          const sSoyad = sKelimeler[sKelimeler.length - 1];
+          const sOnAd = sKelimeler.slice(0, -1).join(" ");
+          return sSoyad === soyad && adBenzerMi(sOnAd, onAd);
+        });
+        if (adaylar.length === 1) return adaylar[0].id;
+      }
+    }
+    return null;
+  };
 
   const sifirla = () => {
     setTur(null); setDosyaAdi(""); setBasliklar([]); setSatirlar([]);
@@ -9715,7 +10467,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
         const veriSatirlari = aoa.slice(baslikIdx + 1).filter((r) => (r || []).some((h) => String(h || "").trim() !== ""));
         setBasliklar(basliklarBulundu);
         setSatirlar(veriSatirlari);
-        setKolonEslemesi(excelKolonlariEsle(basliklarBulundu, ustSatir));
+        setKolonEslemesi(excelKolonlariEsle(basliklarBulundu, ustSatir, aktifDersler, aktifAliasListesi));
       } catch (err) {
         console.error("Excel okunamadı:", err);
         setHata("Excel/CSV dosyası okunamadı. Dosyanın bozuk olmadığından emin olun.");
@@ -9792,7 +10544,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
           // Bu sayfa bir "ders sütunlu" net listesi tablosuysa (Türkçe/Matematik/Fen... başlıkları
           // bulunursa), öğrenci satırlarındaki sayılar sıraya göre değil KONUMA göre yeniden dizilir
           // — böylece boş bırakılan bir ders, sonraki dersleri kaydırmaz (bkz. dersSutunSinirlariniBul).
-          const dersSinirlari = dersSutunSinirlariniBul(satirlarObj) || dersSutunSinirlariniBulVeriden(satirlarObj);
+          const dersSinirlari = dersSutunSinirlariniBul(satirlarObj, aktifDersler.length) || dersSutunSinirlariniBulVeriden(satirlarObj, aktifDersler.length);
           satirlarObj.forEach(({ parcalar, metin: satirMetni }) => {
             metin += (dersSinirlari ? satirNumaralariniHizala(parcalar, satirMetni, dersSinirlari) : satirMetni) + "\n";
           });
@@ -9827,7 +10579,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
         const no = kolonEslemesi.noIdx >= 0 ? String(r[kolonEslemesi.noIdx] ?? "").trim() : "";
         const ad = kolonEslemesi.adIdx >= 0 ? String(r[kolonEslemesi.adIdx] ?? "").trim() : "";
         const dersSonuc = {};
-        DERSLER.forEach((d) => {
+        aktifDersler.forEach((d) => {
           const kol = kolonEslemesi.dersMap[d];
           if (kol && (kol.dogru >= 0 || kol.yanlis >= 0)) {
             const dogru = kol.dogru >= 0 ? Number(r[kol.dogru]) || 0 : 0;
@@ -9835,11 +10587,12 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
             dersSonuc[d] = { dogru, yanlis };
           }
         });
-        const dogrulamaUyarisi = dersSonucDogrula(dersSonuc);
+        const dogrulamaUyarisi = dersSonucDogrula(dersSonuc, aktifDersSoru);
         const puan = kolonEslemesi.puanIdx >= 0 ? (Number(r[kolonEslemesi.puanIdx]) || null) : null;
-        return { no, ad, dersSonuc, ogrenciId: no && noHaritasi[no] ? noHaritasi[no] : null, uyari: dogrulamaUyarisi, gecersiz: !!dogrulamaUyarisi, puan };
+        return { no, ad, dersSonuc, ogrenciId: ogrenciEslestir(no, ad), uyari: dogrulamaUyarisi, gecersiz: !!dogrulamaUyarisi, puan };
       }).filter((r) => r.no || r.ad);
       if (sonuc.length === 0) { setHata("Satır bulunamadı. Dosyayı ve sütun eşleştirmesini kontrol edin."); return; }
+      setSonDersSirasi(null);
       setOnizleme(sonuc);
     } else if (tur === "pdf") {
       // Metin kutusu içeriği (pdfMetin) PDF ilk yüklendiğinde OTOMATİK olarak hizalanmış/birleştirilmiş
@@ -9858,20 +10611,20 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
       // 1. deneme: "Sıra Ö.No İsim Sınıf ..." biçimindeki yaygın net-listesi tablolarını tanıyan
       // yapılandırılmış ayrıştırıcı (bkz. pdfSatirAyristir). Bu, öğrenci numarasını satır sırasıyla
       // karıştırmaz ve ders sütun sırasını başlıklardan otomatik tespit eder.
-      const dersSirasi = pdfDersSirasiBul(satirlarMetin);
+      const dersSirasi = pdfDersSirasiBul(satirlarMetin, aktifDersler, aktifAliasListesi);
       const yapisalSonuc = satirlarMetin
         .map((satir) => {
-          const r = pdfSatirAyristir(satir, dersSirasi);
+          const r = pdfSatirAyristir(satir, dersSirasi, aktifDersSoru);
           if (!r) return null;
-          return { ...r, ogrenciId: r.no && noHaritasi[r.no] ? noHaritasi[r.no] : null };
+          return { ...r, ogrenciId: ogrenciEslestir(r.no, r.ad) };
         })
         .filter(Boolean);
       // 1b. deneme: "Fenomen Okul" tarzı, öğrenci kaydının Sıra/Ad/Okul/Sınıf bilgisinin BİRDEN FAZLA
       // metin satırına yayıldığı raporlar için özel ayrıştırıcı (bkz. pdfCokSatirliKayitlariAyikla).
       // Yukarıdaki tek-satırlık ayrıştırıcı böyle bir dosyada ya hiç ya da çok az satır yakalar; bu
       // yüzden iki yöntemden HANGİSİ daha çok kayıt buluyorsa o kullanılır.
-      const cokSatirliSonuc = pdfCokSatirliKayitlariAyikla(satirlarMetin, dersSirasi)
-        .map((r) => ({ ...r, ogrenciId: r.no && noHaritasi[r.no] ? noHaritasi[r.no] : null }));
+      const cokSatirliSonuc = pdfCokSatirliKayitlariAyikla(satirlarMetin, dersSirasi, aktifDersSoru)
+        .map((r) => ({ ...r, ogrenciId: ogrenciEslestir(r.no, r.ad) }));
       let enIyiYapisalSonuc = cokSatirliSonuc.length > yapisalSonuc.length ? cokSatirliSonuc : yapisalSonuc;
       if (enIyiYapisalSonuc.length > 0) {
         // Bazı satırlarda okul numarası PDF'ten eksik/hatalı hane ile okunmuş olabilir (ör. listede
@@ -9901,6 +10654,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
         enIyiYapisalSonuc.forEach((r) => { if (r.sinif && siniflar.includes(r.sinif)) sinifSayaci[r.sinif] = (sinifSayaci[r.sinif] || 0) + 1; });
         const enCokGecenSinif = Object.entries(sinifSayaci).sort((a, b) => b[1] - a[1])[0];
         if (enCokGecenSinif) setHedefSinif(enCokGecenSinif[0]);
+        setSonDersSirasi(dersSirasi);
         setOnizleme(enIyiYapisalSonuc);
         return;
       }
@@ -9921,19 +10675,20 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
         const dersSonuc = {};
         let uyari = "";
         let puan = null;
-        if (sayilar.length >= DERSLER.length * 2) {
-          DERSLER.forEach((d, i) => { dersSonuc[d] = { dogru: sayilar[i * 2] || 0, yanlis: sayilar[i * 2 + 1] || 0 }; });
-          for (let k = DERSLER.length * 2; k < hamSayilar.length; k++) {
+        if (sayilar.length >= aktifDersler.length * 2) {
+          aktifDersler.forEach((d, i) => { dersSonuc[d] = { dogru: sayilar[i * 2] || 0, yanlis: sayilar[i * 2 + 1] || 0 }; });
+          for (let k = aktifDersler.length * 2; k < hamSayilar.length; k++) {
             if (/[.,]/.test(hamSayilar[k])) { puan = Number(hamSayilar[k].replace(",", ".")); break; }
           }
         } else if (sayilar.length > 0) {
-          uyari = `${sayilar.length} sayı bulundu, ${DERSLER.length * 2} bekleniyordu`;
+          uyari = `${sayilar.length} sayı bulundu, ${aktifDersler.length * 2} bekleniyordu`;
         }
-        const dogrulamaUyarisi = dersSonucDogrula(dersSonuc);
+        const dogrulamaUyarisi = dersSonucDogrula(dersSonuc, aktifDersSoru);
         if (dogrulamaUyarisi) uyari = uyari ? `${uyari} · ${dogrulamaUyarisi}` : dogrulamaUyarisi;
-        return { no, ad, dersSonuc, ogrenciId: no && noHaritasi[no] ? noHaritasi[no] : null, uyari, gecersiz: !!dogrulamaUyarisi, puan };
+        return { no, ad, dersSonuc, ogrenciId: ogrenciEslestir(no, ad), uyari, gecersiz: !!dogrulamaUyarisi, puan };
       }).filter((r) => r.no || r.ad);
       if (sonuc.length === 0) { setHata("Metinden satır ayıklanamadı. Aşağıdaki kutudan metni düzenleyip tekrar deneyin."); return; }
+      setSonDersSirasi(null);
       setOnizleme(sonuc);
     }
   };
@@ -9946,17 +10701,18 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
     setHata(""); setBasariMesaji(""); setAiYukleniyor(true); setAiIlerleme("");
     try {
       const satirlarMetin = pdfMetin.split("\n").map((s) => s.trim()).filter(Boolean);
-      const dersSirasi = pdfDersSirasiBul(satirlarMetin);
-      const kayitlar = await pdfNetListesiAIIleAyristir(pdfMetin, dersSirasi, (p, t) => setAiIlerleme(`Parça ${p}/${t} okunuyor…`));
+      const dersSirasi = pdfDersSirasiBul(satirlarMetin, aktifDersler, aktifAliasListesi);
+      const kayitlar = await pdfNetListesiAIIleAyristir(pdfMetin, dersSirasi, aktifDersSoru, (p, t) => setAiIlerleme(`Parça ${p}/${t} okunuyor…`));
       if (kayitlar.length === 0) {
         setHata("AI ile de öğrenci satırı bulunamadı. PDF metnini kontrol edip elle düzenledikten sonra tekrar deneyebilirsiniz.");
         return;
       }
-      const sonuclandi = kayitlar.map((r) => ({ ...r, ogrenciId: r.no && noHaritasi[r.no] ? noHaritasi[r.no] : null }));
+      const sonuclandi = kayitlar.map((r) => ({ ...r, ogrenciId: ogrenciEslestir(r.no, r.ad) }));
       const sinifSayaci = {};
       sonuclandi.forEach((r) => { if (r.sinif && siniflar.includes(r.sinif)) sinifSayaci[r.sinif] = (sinifSayaci[r.sinif] || 0) + 1; });
       const enCokGecenSinif = Object.entries(sinifSayaci).sort((a, b) => b[1] - a[1])[0];
       if (enCokGecenSinif) setHedefSinif(enCokGecenSinif[0]);
+      setSonDersSirasi(null);
       setOnizleme(sonuclandi);
     } catch (err) {
       console.error("AI ile ayrıştırma hatası:", err);
@@ -9967,6 +10723,25 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
   };
 
   const onizlemeGuncelle = (i, alan, deger) => setOnizleme((liste) => liste.map((r, idx) => (idx === i ? { ...r, [alan]: deger } : r)));
+  // onizlemeGuncelle tek bir alanı değiştirir; sınıf düzeltmesi (bkz. sinifSecildi) aynı anda birden
+  // fazla alanı (sinif + dersSonuc + uyari + gecersiz) tek seferde güncellemesi gerektiği için bu
+  // toplu güncelleme fonksiyonu eklendi.
+  const onizlemeCoklaGuncelle = (i, degisiklikler) => setOnizleme((liste) => liste.map((r, idx) => (idx === i ? { ...r, ...degisiklikler } : r)));
+  // Önizlemede bir satırın Sınıf sütunundan bir şube işaretlendiğinde çağrılır. Satırın sınıfı hiç
+  // okunamadıysa (sinifSorunu:true) ve satırın ham veri metni (hamVeriStr) elimizdeyse, sınıfın yanlış
+  // okunması yüzünden ders sayılarının başına karışmış olabilecek fazladan sayı(lar)ı atarak dersleri
+  // yeniden ayrıştırmayı dener (bkz. sinifOkunamayanSatiriYenidenCoz) — böylece işaretlenen şube, PDF'ten
+  // gerçekten öyle okunmuş gibi hem sınıfı hem de (mümkünse) bozulan ders sayılarını düzeltir.
+  const sinifSecildi = (i, r, yeniSinif) => {
+    const duzeltilmis = (r.sinifSorunu && sonDersSirasi && r.hamVeriStr)
+      ? sinifOkunamayanSatiriYenidenCoz(r.hamVeriStr, sonDersSirasi, aktifDersSoru)
+      : null;
+    if (duzeltilmis) {
+      onizlemeCoklaGuncelle(i, { sinif: yeniSinif, sinifSorunu: false, ...duzeltilmis });
+    } else {
+      onizlemeGuncelle(i, "sinif", yeniSinif);
+    }
+  };
 
   const yeniDenemeOlustur = () => {
     const ad = yeniDenemeAdi.trim();
@@ -9988,9 +10763,14 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
   // Oto-oluşturma açıkken, ders sonucu olan ve elle/otomatik eşleşmemiş satırlar da "kaydedilecek" sayılır
   // (kaydet sırasında önce yeni öğrenci olarak eklenip sonra sonuçları işlenecek).
   // "gecersiz" (soru sayısını aşan ders sonuçları) normalde kaydı engeller — AMA bu bozukluk sınıf
-  // bilgisinin okunamamasından KAYNAKLANIYORSA (sinifSorunu:true) ve satır zaten bilinen bir öğrenciyle
-  // eşleştirilmişse (ogrenciId doluysa), öğretmen kimliği zaten doğruladığı için kayıt engellenmemeli.
-  const kaydedilebilirMi = (r) => !r.gecersiz || !!(r.sinifSorunu && r.ogrenciId);
+  // bilgisinin okunamamasından KAYNAKLANIYORSA (sinifSorunu:true), kayıt artık İKİ durumda da
+  // engellenmiyor: (1) satır zaten bilinen bir öğrenciyle eşleştirilmişse (ogrenciId doluysa) —
+  // öğretmen kimliği zaten doğrulamıştır; (2) "Eşleşmeyen öğrencileri otomatik oluştur" açıksa —
+  // öğretmen önizlemedeki Sınıf sütunundan (veya üstteki yedek şube seçiminden) hangi şubeyi
+  // işaretlediyse öğrenci o şubeye yeni kayıt olarak eklenir, sanki sınıfı PDF'ten öyle okunmuş gibi.
+  // Sınıfla İLGİSİZ bir ders-verisi bozukluğu (sinifSorunu:false) hâlâ kaydı engeller — o durumda
+  // sorunun kaynağı belirsizdir ve veri gerçekten yanlış olabilir.
+  const kaydedilebilirMi = (r) => !r.gecersiz || !!(r.sinifSorunu && (r.ogrenciId || otoOgrenciOlustur));
   const kaydedilecekSayisi = onizleme
     ? onizleme.filter((r) => kaydedilebilirMi(r) && Object.keys(r.dersSonuc).length > 0 && (r.ogrenciId || otoOgrenciOlustur)).length
     : 0;
@@ -10042,7 +10822,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
     const gecersizAtlandi = onizleme.filter((r) => r.gecersiz).length;
     setBasariMesaji(
       (yeniEklenenSayisi > 0
-        ? `${isleneler.length} öğrencinin sonucu kaydedildi (${yeniEklenenSayisi} yeni öğrenci kendi şubesine eklendi, şubesi okunamayanlar ${hedefSinif}'e eklendi).`
+        ? `${isleneler.length} öğrencinin sonucu kaydedildi (${yeniEklenenSayisi} yeni öğrenci kendi şubesine eklendi, şubesi okunamayanlar önizlemede işaretlediğiniz şubeye eklendi).`
         : `${isleneler.length} öğrencinin sonucu kaydedildi.`)
       + (gecersizAtlandi > 0 ? ` ${gecersizAtlandi} satır olası hatalı okuma nedeniyle atlandı (soru sayısını aşan D/Y değerleri) — PDF metnini düzenleyip tekrar ayrıştırabilirsiniz.` : "")
     );
@@ -10051,10 +10831,29 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
 
   const kolonSecenekleri = basliklar.map((b, i) => ({ value: i, label: b || `Sütun ${i + 1}` }));
 
+  // "Denemeler" sekmesinden (giriş listesi) buraya geçildiğinde, öğretmen önizlemeye bakarken ya da
+  // kaydettikten hemen sonra sonuçları görmek için ekrandan çıkıp tekrar "Denemeler"e girmek zorunda
+  // kalmasın diye — bu düğme aynı ekranda kalarak listeleme görünümüne (altSekme "giris") döner ve
+  // az önce içe aktarılan denemeyi otomatik seçili getirir. setAltSekme/setDenemeSecili bu bileşen
+  // başka bir yerden (ör. Optik Okuyucu sayfası) çağrıldığında verilmeyebilir, o yüzden opsiyoneldir.
+  const sonuclariListele = () => {
+    if (setDenemeSecili && hedefDenemeId) setDenemeSecili(hedefDenemeId);
+    if (setAltSekme) setAltSekme("giris");
+  };
+
   return (
     <div>
       <Kart className="p-4 mb-6">
-        <h2 className="font-display text-base font-medium mb-1">Deneme Sonucu İçe Aktar</h2>
+        <div className="flex items-start justify-between gap-3 mb-1 flex-wrap">
+          <h2 className="font-display text-base font-medium">Deneme Sonucu İçe Aktar</h2>
+          {setAltSekme && (
+            <button onClick={sonuclariListele}
+              className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold shrink-0"
+              style={{ background: `${ORANGE}14`, color: ORANGE, border: `1px solid ${ORANGE}55` }}>
+              <IconEdit size={14} color={ORANGE} />Sonuçları Listele
+            </button>
+          )}
+        </div>
         <p className="text-xs mb-4" style={{ color: SUBTLE }}>PDF veya Excel/CSV dosyasından toplu deneme sonucu yükleyin. Yüklediğiniz veri sadece <strong>sizin okulunuzun</strong> verisine kaydedilir — diğer okulların verisi görülmez veya etkilenmez. Öğrenciler henüz sistemde kayıtlı değilse, aşağıdaki "eşleşmeyen öğrencileri otomatik oluştur" seçeneğini işaretleyip hedef şubeyi seçerek, dosyadaki tüm öğrencileri sonuçlarıyla birlikte tek seferde ekleyebilirsiniz.</p>
 
         <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -10064,6 +10863,25 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
           </GoogleSelect>
           <span className="text-xs" style={{ color: SUBTLE }}>hedef deneme olarak seçilecek</span>
         </div>
+        <div className="flex flex-wrap items-center gap-2 mb-4 px-3 py-2.5 rounded-lg" style={{ background: BG }}>
+          <span className="text-xs font-medium" style={{ color: SUBTLE }}>Bu dosya hangi sınıf seviyesine ait:</span>
+          <GoogleSelect value={seviye} onChange={(e) => setSeviye(e.target.value)} className="sm:w-28">
+            {seviyeler.length === 0 && <option value="">—</option>}
+            {seviyeler.map((sv) => <option key={sv} value={sv}>{sv}. sınıf</option>)}
+          </GoogleSelect>
+          <button type="button" onClick={() => setDersAyarlariAcik(true)}
+            className="px-3 py-1.5 rounded-full text-xs font-medium border shrink-0" style={{ borderColor: BORDER, color: BLUE }}>
+            <IconEdit size={12} color={BLUE} style={{ display: "inline-block", marginRight: 4, verticalAlign: "-1px" }} />Ders Ayarları
+          </button>
+          <span className="text-xs w-full sm:w-auto" style={{ color: SUBTLE }}>
+            Şu an kullanılacak dersler: {aktifDersler.map((d) => `${d} (${aktifDersSoru[d] ?? "?"} soru)`).join(", ")}
+            {aktifDeneme?.dersAyarlari?.[seviye] ? "" : " — varsayılan LGS listesi, bu seviyeye özel bir ayar yok"}
+          </span>
+        </div>
+        {dersAyarlariAcik && (
+          <DenemeDersAyarlariModal denemeler={denemeler} updateDenemeler={updateDenemeler} siniflar={siniflar}
+            baslangicDenemeId={hedefDenemeId} baslangicSeviye={seviye} onClose={() => setDersAyarlariAcik(false)} />
+        )}
         <div className="flex items-center gap-2 mb-5">
           <GoogleInput value={yeniDenemeAdi} onChange={(e) => setYeniDenemeAdi(e.target.value)} placeholder="Yeni deneme adı (ör. 21. Deneme)" className="flex-1 max-w-xs"
             onKeyDown={(e) => e.key === "Enter" && yeniDenemeOlustur()} />
@@ -10138,7 +10956,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
             </div>
           </div>
           <div className="flex flex-col gap-2">
-            {DERSLER.map((d) => (
+            {aktifDersler.map((d) => (
               <div key={d} className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-lg" style={{ background: BG }}>
                 <span className="text-xs font-medium w-40 shrink-0">{d}</span>
                 <GoogleSelect value={kolonEslemesi.dersMap[d]?.dogru ?? -1} onChange={(e) => kolonGuncelle([d, "dogru"], Number(e.target.value))} className="flex-1 min-w-[140px]">
@@ -10159,7 +10977,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
       {tur === "pdf" && pdfMetin && (
         <Kart className="p-4 mb-6">
           <h2 className="font-display text-base font-medium mb-1">PDF'ten Çıkarılan Metin</h2>
-          <p className="text-xs mb-3" style={{ color: SUBTLE }}>Her satır: okul numarası, ad soyad ve sırasıyla {DERSLER.join(", ")} derslerinin doğru/yanlış sayıları olarak okunmaya çalışılır. Satır hatalıysa aşağıdan düzenleyip tekrar "Önizlemeyi Oluştur" diyebilirsiniz.</p>
+          <p className="text-xs mb-3" style={{ color: SUBTLE }}>Her satır: okul numarası, ad soyad ve sırasıyla {aktifDersler.join(", ")} derslerinin doğru/yanlış sayıları olarak okunmaya çalışılır. Satır hatalıysa aşağıdan düzenleyip tekrar "Önizlemeyi Oluştur" diyebilirsiniz.</p>
           <textarea value={pdfMetin} onChange={(e) => setPdfMetin(e.target.value)} rows={10}
             className="w-full text-xs font-mono p-3 rounded-lg border outline-none" style={{ borderColor: BORDER }} />
           <div className="flex flex-wrap items-center gap-2 mt-4">
@@ -10197,6 +11015,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
                 <tr style={{ color: SUBTLE }} className="text-left">
                   <th className="px-2 py-1.5">No</th>
                   <th className="px-2 py-1.5">Ad (dosyadan)</th>
+                  <th className="px-2 py-1.5">Sınıf</th>
                   <th className="px-2 py-1.5">Eşleşen Öğrenci</th>
                   <th className="px-2 py-1.5">Ders Sayısı</th>
                   <th className="px-2 py-1.5">Puan</th>
@@ -10205,7 +11024,8 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
               <tbody>
                 {onizleme.map((r, i) => {
                   const yeniOlarakEklenecek = kaydedilebilirMi(r) && !r.ogrenciId && otoOgrenciOlustur && Object.keys(r.dersSonuc).length > 0;
-                  const eklenecekSinif = r.sinif && siniflar.includes(r.sinif) ? r.sinif : hedefSinif;
+                  const eslesenOgrenci = r.ogrenciId ? students.find((s) => s.id === r.ogrenciId) : null;
+                  const eklenecekSinif = (r.sinif && siniflar.includes(r.sinif)) ? r.sinif : (eslesenOgrenci ? eslesenOgrenci.sinif : hedefSinif);
                   // Sınıf bilgisi okunamadığı için ders sayıları da bozuk görünen AMA satır zaten bilinen
                   // bir öğrenciyle eşleştirilmiş durumlar artık ENGELLENMİYOR (kaydedilebilirMi(r) true) —
                   // bu yüzden onları sert "kaydedilmeyecek" kırmızısıyla değil, "gözden geçir ama
@@ -10216,13 +11036,34 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
                     <td className="px-2 py-1.5 font-mono">{r.no || "—"}</td>
                     <td className="px-2 py-1.5">{r.ad || "—"}{r.uyari && <div style={{ color: gercektenEngelli ? RED : YELLOW }}>{gercektenEngelli ? "⚠ " : ""}{r.uyari}</div>}</td>
                     <td className="px-2 py-1.5">
+                      {r.sinifSorunu ? (
+                        <select value={eklenecekSinif} onChange={(e) => sinifSecildi(i, r, e.target.value)}
+                          className="text-xs rounded px-1.5 py-1 border outline-none" style={{ borderColor: GREEN }}
+                          title="Bu öğrencinin sınıfı okunamadı — bir şube işaretleyin; sınıfın yanlış okunması yüzünden kaymış olabilecek ders sayıları da otomatik düzeltilmeye çalışılır">
+                          {siniflar.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      ) : r.ogrenciId ? (
+                        <span style={{ color: SUBTLE }}>{eslesenOgrenci?.sinif || "—"}</span>
+                      ) : (r.sinif && siniflar.includes(r.sinif)) ? (
+                        <span>{r.sinif}</span>
+                      ) : otoOgrenciOlustur ? (
+                        <select value={eklenecekSinif} onChange={(e) => sinifSecildi(i, r, e.target.value)}
+                          className="text-xs rounded px-1.5 py-1 border outline-none" style={{ borderColor: GREEN }}
+                          title="Bu öğrencinin şubesi sistemde tanınmadı — kaydedilecek şubeyi işaretleyin">
+                          {siniflar.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      ) : (
+                        <span style={{ color: SUBTLE }}>—</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5">
                       <select value={r.ogrenciId || ""} onChange={(e) => onizlemeGuncelle(i, "ogrenciId", e.target.value || null)}
                         className="text-xs rounded px-1.5 py-1 border outline-none max-w-[220px]" style={{ borderColor: r.ogrenciId ? BORDER : (yeniOlarakEklenecek ? GREEN : RED) }}>
                         <option value="">{yeniOlarakEklenecek ? `— Yeni öğrenci (${eklenecekSinif}) olarak eklenecek —` : "— Eşleşmedi —"}</option>
                         {students.map((s) => <option key={s.id} value={s.id}>{s.ad} ({s.no || "no yok"}) · {s.sinif}</option>)}
                       </select>
                     </td>
-                    <td className="px-2 py-1.5">{Object.keys(r.dersSonuc).length}/{DERSLER.length}</td>
+                    <td className="px-2 py-1.5">{Object.keys(r.dersSonuc).length}/{aktifDersler.length}</td>
                     <td className="px-2 py-1.5">
                       <input type="number" step="0.001" value={r.puan ?? ""} onChange={(e) => onizlemeGuncelle(i, "puan", e.target.value === "" ? null : Number(e.target.value))}
                         placeholder="—" className="text-xs rounded px-1.5 py-1 border outline-none w-20" style={{ borderColor: BORDER }} />
@@ -10582,7 +11423,7 @@ function OptikOkuyucuModal({ ders, onClose, onUygula }) {
   );
 }
 
-function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, updateDenemeSonuclari, denemeEkBilgi, updateDenemeEkBilgi, denemeSecili, setDenemeSecili, sinifFiltre, setSinifFiltre, altSekme, setAltSekme }) {
+function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, updateDenemeSonuclari, denemeEkBilgi, updateDenemeEkBilgi, denemeSecili, setDenemeSecili, sinifFiltre, setSinifFiltre, altSekme, setAltSekme, siniflar = SINIFLAR }) {
   // Boş değer ("") "Tüm Şubeler" anlamına gelir.
   const tumSubelerMi = sinifFiltre === "";
   const sinifOgrencileri = useMemo(() => students.filter((s) => tumSubelerMi || s.sinif === sinifFiltre).sort((a, b) => a.ad.localeCompare(b.ad, "tr")), [students, sinifFiltre, tumSubelerMi]);
@@ -10605,11 +11446,23 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
   const [form, setForm] = useState({});
   const [puanForm, setPuanForm] = useState("");
   const [optikDers, setOptikDers] = useState(null);
+
+  const seciliOgrenci = students.find((s) => s.id === ogrenciSecili);
+  const seciliDeneme = denemeler.find((d) => d.id === denemeSecili) || null;
+  // Seçili öğrencinin kendi sınıfının seviyesine (ör. "9-A" -> "9") ve seçili denemeye göre hangi
+  // derslerin ve her dersten kaç soru olduğunu belirler (bkz. "Ders Ayarları", denemeDersBilgisi).
+  // Özel bir ayar yoksa standart LGS listesine (DERSLER/DERS_SORU) döner.
+  const { dersler: aktifDersler, dersSoru: aktifDersSoru } = useMemo(
+    () => denemeDersBilgisi(seciliDeneme, sinifSeviyesiCikar(seciliOgrenci?.sinif)),
+    [seciliDeneme, seciliOgrenci]
+  );
+  const aktifToplamSoru = useMemo(() => aktifDersler.reduce((t, d) => t + (Number(aktifDersSoru[d]) || 0), 0), [aktifDersler, aktifDersSoru]);
+
   useEffect(() => {
     if (!ogrenciSecili) return;
     const mevcut = (denemeSonuclari[denemeSecili] && denemeSonuclari[denemeSecili][ogrenciSecili]) || {};
     const baslangic = {};
-    DERSLER.forEach((d) => {
+    aktifDersler.forEach((d) => {
       const kayit = mevcut[d] || {};
       baslangic[d] = { dogru: kayit.dogru !== undefined ? String(kayit.dogru) : "", yanlis: kayit.yanlis !== undefined ? String(kayit.yanlis) : "" };
     });
@@ -10617,20 +11470,21 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
     const mevcutPuan = denemeEkBilgi?.[denemeSecili]?.[ogrenciSecili]?.lgsPuani;
     setPuanForm(mevcutPuan != null ? String(mevcutPuan) : "");
     // eslint-disable-next-line
-  }, [denemeSecili, ogrenciSecili]);
+  }, [denemeSecili, ogrenciSecili, aktifDersler]);
 
   const degistir = (ders, alan, deger) => setForm((f) => ({ ...f, [ders]: { ...f[ders], [alan]: deger } }));
 
-  const toplamNet = useMemo(() => DERSLER.reduce((t, d) => {
+  const toplamNet = useMemo(() => aktifDersler.reduce((t, d) => {
     const dogru = Number(form[d]?.dogru) || 0;
     const yanlis = Number(form[d]?.yanlis) || 0;
     return t + netHesapla(dogru, yanlis);
-  }, 0), [form]);
+  }, 0), [form, aktifDersler]);
 
   const kaydet = () => {
+
     if (!ogrenciSecili || !denemeSecili) return;
     const yeniSonuc = {};
-    DERSLER.forEach((d) => { yeniSonuc[d] = { dogru: Number(form[d]?.dogru) || 0, yanlis: Number(form[d]?.yanlis) || 0 }; });
+    aktifDersler.forEach((d) => { yeniSonuc[d] = { dogru: Number(form[d]?.dogru) || 0, yanlis: Number(form[d]?.yanlis) || 0 }; });
     const guncel = { ...denemeSonuclari, [denemeSecili]: { ...(denemeSonuclari[denemeSecili] || {}), [ogrenciSecili]: yeniSonuc } };
     updateDenemeSonuclari(guncel);
     if (updateDenemeEkBilgi) {
@@ -10668,7 +11522,7 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
     }
     if (ogrenciId === ogrenciSecili) {
       const bosForm = {};
-      DERSLER.forEach((d) => { bosForm[d] = { dogru: "", yanlis: "" }; });
+      aktifDersler.forEach((d) => { bosForm[d] = { dogru: "", yanlis: "" }; });
       setForm(bosForm);
       setPuanForm("");
     }
@@ -10722,8 +11576,6 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
     setDenemeSecili(kalanDenemeler.length ? kalanDenemeler[kalanDenemeler.length - 1].id : "");
   };
 
-  const seciliOgrenci = students.find((s) => s.id === ogrenciSecili);
-
   const tumDenemelerMi = denemeSecili === TOPLAM_DENEME_ID;
 
   // Sınıf tablosu: seçili denemede her öğrencinin toplam neti (girilmemişse "—").
@@ -10735,7 +11587,7 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
         denemeler.forEach((d) => {
           const sonuc = denemeSonuclari[d.id]?.[s.id];
           if (!sonuc) return;
-          const net = DERSLER.reduce((t, ders) => {
+          const net = Object.keys(sonuc).reduce((t, ders) => {
             const k = sonuc[ders];
             if (!k) return t;
             return t + netHesapla(Number(k.dogru) || 0, Number(k.yanlis) || 0);
@@ -10750,7 +11602,7 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
       const sonuc = denemeVeri[s.id];
       let net = null;
       if (sonuc) {
-        net = DERSLER.reduce((t, d) => {
+        net = Object.keys(sonuc).reduce((t, d) => {
           const k = sonuc[d];
           if (!k) return t;
           return t + netHesapla(Number(k.dogru) || 0, Number(k.yanlis) || 0);
@@ -10787,7 +11639,7 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
           <option value={TOPLAM_DENEME_ID}>Tüm Denemeler</option>
           {denemeler.map((d) => <option key={d.id} value={d.id}>{d.ad}</option>)}
         </GoogleSelect>
-        <SinifSecici value={sinifFiltre} onChange={setSinifFiltre} hepsi={true} className="flex-1 min-w-0" />
+        <SinifSecici value={sinifFiltre} onChange={setSinifFiltre} hepsi={true} siniflar={siniflar} className="flex-1 min-w-0" />
         <button onClick={() => setAltSekme && setAltSekme("giris")}
           className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-semibold shrink-0"
           style={{
@@ -10885,7 +11737,7 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
             <h2 className="font-display text-xl font-medium">{seciliOgrenci?.ad}</h2>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-base font-semibold px-4 py-1.5 rounded-full" style={{ color: ORANGE, background: `${ORANGE}14` }}>Toplam Net: {toplamNet.toFixed(2)} / {TOPLAM_SORU}</span>
+              <span className="text-base font-semibold px-4 py-1.5 rounded-full" style={{ color: ORANGE, background: `${ORANGE}14` }}>Toplam Net: {toplamNet.toFixed(2)} / {aktifToplamSoru}</span>
               <label className="flex items-center gap-1.5 text-base font-semibold px-4 py-1.5 rounded-full" style={{ color: PURPLE, background: `${PURPLE}14` }}>
                 Puan:
                 <input type="number" step="0.001" value={puanForm} onChange={(e) => setPuanForm(e.target.value)} placeholder="—"
@@ -10897,19 +11749,19 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
             <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-x-3 items-center text-xs font-medium mb-2" style={{ color: SUBTLE }}>
               <span>Ders</span><span className="text-center w-14">Soru</span><span className="text-center w-16">Doğru</span><span className="text-center w-16">Yanlış</span><span className="text-center w-14">Net</span><span className="text-center w-8"></span>
             </div>
-            {DERSLER.map((d) => {
+            {aktifDersler.map((d) => {
               const dogru = Number(form[d]?.dogru) || 0;
               const yanlis = Number(form[d]?.yanlis) || 0;
-              const bos = DERS_SORU[d] - dogru - yanlis;
+              const bos = (Number(aktifDersSoru[d]) || 0) - dogru - yanlis;
               const net = netHesapla(dogru, yanlis);
               return (
                 <div key={d} className="py-2" style={{ borderTop: `1px solid ${BORDER}` }}>
                   <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-x-3 items-center">
                     <span className="text-sm">{d}</span>
-                    <span className="text-xs text-center w-14" style={{ color: SUBTLE }}>{DERS_SORU[d]}</span>
-                    <input type="number" min="0" max={DERS_SORU[d]} value={form[d]?.dogru ?? ""} onChange={(e) => degistir(d, "dogru", e.target.value)}
+                    <span className="text-xs text-center w-14" style={{ color: SUBTLE }}>{aktifDersSoru[d] ?? "?"}</span>
+                    <input type="number" min="0" max={aktifDersSoru[d]} value={form[d]?.dogru ?? ""} onChange={(e) => degistir(d, "dogru", e.target.value)}
                       className="w-16 text-center text-sm border rounded-lg px-2 py-1.5 focus:outline-none" style={{ borderColor: BORDER }} />
-                    <input type="number" min="0" max={DERS_SORU[d]} value={form[d]?.yanlis ?? ""} onChange={(e) => degistir(d, "yanlis", e.target.value)}
+                    <input type="number" min="0" max={aktifDersSoru[d]} value={form[d]?.yanlis ?? ""} onChange={(e) => degistir(d, "yanlis", e.target.value)}
                       className="w-16 text-center text-sm border rounded-lg px-2 py-1.5 focus:outline-none" style={{ borderColor: BORDER }} />
                     <span className="text-sm font-semibold text-center w-14" style={{ color: net >= 0 ? GREEN : RED }}>{net.toFixed(2)}</span>
                     <button onClick={() => setOptikDers(d)} title={`${d} için optik okuyucu`} className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: `${BLUE}14` }}>
@@ -11556,7 +12408,7 @@ function OptikOkuyucuSayfa({ students, updateStudents, denemeler, updateDenemele
         <GoogleSelect value={denemeSecili} onChange={(e) => setDenemeSecili(e.target.value)} className="sm:w-40">
           {denemeler.map((d) => <option key={d.id} value={d.id}>{d.ad}</option>)}
         </GoogleSelect>
-        <SinifSecici value={sinifFiltre} onChange={setSinifFiltre} hepsi={false} className="sm:w-32" />
+        <SinifSecici value={sinifFiltre} onChange={setSinifFiltre} hepsi={false} siniflar={siniflar} className="sm:w-32" />
         <button onClick={() => setAltSekme("iceAktar")} className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium border" style={{ borderColor: BORDER, color: BLUE }}>
           <IconFileUp size={14} color={BLUE} />PDF/Excel'den Yükle (Tüm Şube)
         </button>
