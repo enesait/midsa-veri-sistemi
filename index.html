@@ -3047,7 +3047,7 @@ function IslemGecmisiModal({ islemKayitlari, tarihFormat, islemYapanEtiket, onCl
 // öğretmenin sisteme ne zaman girip çıktığını ve şifresini ne sıklıkla kullandığını gösterir,
 // aktif bir oturum varsa gerekirse çıkışa zorlayabilir (zorlaCikis bayrağını Firebase'e yazar;
 // öğretmen tarafındaki dinleyici bunu görüp otomatik olarak çıkış yapar).
-function YonetimPaneli({ ogretmenSifreleri, updateOgretmenSifreleri, veliSifreOnek, updateVeliSifreOnek }) {
+function YonetimPaneli({ ogretmenSifreleri, updateOgretmenSifreleri, veliSifreOnek, updateVeliSifreOnek, plan }) {
   const [gecmis, setGecmis] = useState({});
   const [yukleniyorMu, setYukleniyorMu] = useState(true);
   const [islemler, setIslemler] = useState({});
@@ -3156,10 +3156,15 @@ function YonetimPaneli({ ogretmenSifreleri, updateOgretmenSifreleri, veliSifreOn
     return new Date(ts).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
   };
 
+  const KISITLI_OGRETMEN_LIMITI = 3;
   const yeniSifreOlustur = () => {
     const liste = ogretmenSifreleri || [];
     if (liste.length >= MAX_OGRETMEN_SIFRE) {
       window.alert(`En fazla ${MAX_OGRETMEN_SIFRE} öğretmen şifresi oluşturabilirsiniz.`);
+      return;
+    }
+    if (plan !== "premium" && liste.length >= KISITLI_OGRETMEN_LIMITI) {
+      window.alert(`Kısıtlı planda en fazla ${KISITLI_OGRETMEN_LIMITI} öğretmen ekleyebilirsiniz. Sınırsız öğretmen için Premium'a geçin.`);
       return;
     }
     const yeni = { id: uid(), sifre: rastgeleOgretmenSifresi(liste), ad: "", olusturmaZamani: Date.now() };
@@ -3250,10 +3255,11 @@ function YonetimPaneli({ ogretmenSifreleri, updateOgretmenSifreleri, veliSifreOn
 
       <h2 className="font-display text-base font-medium mb-1">Öğretmen Şifreleri ({(ogretmenSifreleri || []).length}/{MAX_OGRETMEN_SIFRE})</h2>
       <p className="text-xs mb-3" style={{ color: SUBTLE }}>Her öğretmene ayrı bir şifre oluşturun. İsterseniz her şifreye, kime ait olduğunu hatırlamak için bir ad ekleyebilirsiniz.</p>
-      <button onClick={yeniSifreOlustur} disabled={(ogretmenSifreleri || []).length >= MAX_OGRETMEN_SIFRE}
+      <button onClick={yeniSifreOlustur} disabled={(ogretmenSifreleri || []).length >= MAX_OGRETMEN_SIFRE || (plan !== "premium" && (ogretmenSifreleri || []).length >= KISITLI_OGRETMEN_LIMITI)}
         className="mb-3 flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium text-white disabled:opacity-50" style={{ background: BLUE }}>
         <IconPlus size={16} color="#fff" />Yeni Şifre Oluştur
       </button>
+      {plan !== "premium" && <p className="text-xs mb-3" style={{ color: SUBTLE }}>Kısıtlı planda en fazla {KISITLI_OGRETMEN_LIMITI} öğretmen eklenebilir. Sınırsız için Premium'a geçin.</p>}
       {(ogretmenSifreleri || []).length === 0 ? (
         <Bos mesaj="Henüz bir öğretmen şifresi oluşturulmadı" />
       ) : (
@@ -3363,6 +3369,28 @@ function YonetimPaneli({ ogretmenSifreleri, updateOgretmenSifreleri, veliSifreOn
           onOnayla={ogretmenSilOnaylandi}
           onClose={() => setSilinecekOgretmen(null)}
         />
+      )}
+    </div>
+  );
+}
+
+// PREMIUM KİLİT: Kısıtlı plandaki bir okulun tamamen kapalı bir modüle girdiğinde gördüğü ekran.
+// Basit ve tek amaçlı: kullanıcıyı bilgilendirir, panik yaratmaz, İletişime Geçin'e yönlendirir.
+function PremiumKilit({ baslik, telegramKullaniciAdi }) {
+  return (
+    <div className="flex flex-col items-center justify-center text-center py-16 px-6">
+      <div className="w-14 h-14 rounded-full flex items-center justify-center mb-4 text-2xl" style={{ background: "#F3F0FF" }}>
+        ⭐
+      </div>
+      <h2 className="font-display text-lg font-medium mb-1">{baslik} — Premium Özellik</h2>
+      <p className="text-sm max-w-sm mb-5" style={{ color: SUBTLE }}>
+        Bu modül Premium plana özeldir. Kısıtlı plandaki okullarda kapalıdır. Açmak isterseniz bizimle iletişime geçin.
+      </p>
+      {telegramKullaniciAdi && (
+        <a href={`https://t.me/${telegramKullaniciAdi}`} target="_blank" rel="noopener noreferrer"
+          className="px-5 py-2.5 rounded-full text-sm font-medium text-white" style={{ background: BLUE }}>
+          İletişime Geçin
+        </a>
       )}
     </div>
   );
@@ -3500,6 +3528,11 @@ function ProgramSahibiPaneli({ cikisYap }) {
   // Ana Kullanıcının şifresini rastgele değil, elle girilen harf/sayılarla değiştirir. Aynı şifre
   // başka bir Ana Kullanıcıda kullanılıyorsa reddedilir.
   const sifreDegistir = (id, deger) => setSifreOnizleme((p) => ({ ...p, [id]: deger }));
+  // PLAN: bu okulun Kısıtlı/Premium durumunu tek tıkla değiştirir (örn. ödeme geldiğinde).
+  const planDegistir = (id, mevcutPlan) => {
+    const yeni = mevcutPlan === "premium" ? "kisitli" : "premium";
+    db.ref(yonetimYoluAl() + "/anaKullanicilar/" + id + "/plan").set(yeni);
+  };
   const sifreKaydet = (id) => {
     const deger = (sifreOnizleme[id] ?? "").trim().toUpperCase().replace(/\s+/g, "");
     if (!deger) return;
@@ -3618,9 +3651,9 @@ function ProgramSahibiPaneli({ cikisYap }) {
       window.alert('Onaylamak için kutuya büyük harflerle "SİL" yazmalısınız.');
       return;
     }
-    if (!window.confirm(`Bu işlem ${anaListesi.length} Ana Kullanıcının TÜMÜNÜ ve onlara bağlı tüm Öğretmen/Veli girişlerini kalıcı olarak silecek. Program Sahibi dışında kimse giriş yapamayacak. Devam edilsin mi?`)) return;
+    if (!window.confirm(`Bu işlem ${anaListesi.length} Ana Kullanıcının TÜMÜNÜ ve onlara bağlı tüm Öğretmen/Veli girişlerini kalıcı olarak silecek. Patron dışında kimse giriş yapamayacak. Devam edilsin mi?`)) return;
     db.ref(yonetimYoluAl() + "/anaKullanicilar").remove()
-      .then(() => { setSifirlamaOnay(""); window.alert("Tamamlandı: artık yalnızca Program Sahibi şifresiyle giriş yapılabilir."); })
+      .then(() => { setSifirlamaOnay(""); window.alert("Tamamlandı: artık yalnızca Patron şifresiyle giriş yapılabilir."); })
       .catch((e) => window.alert("Silme sırasında hata oluştu: " + (e && e.message ? e.message : e)));
   };
 
@@ -3642,7 +3675,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
         </button>
         <div className="flex items-center gap-2">
           <div className="w-9 h-9 rounded-lg flex items-center justify-center font-display font-bold text-white text-sm" style={{ background: `linear-gradient(135deg, ${BLUE}, ${GREEN})` }}>SÇ</div>
-          <span className="font-display text-lg hidden sm:inline">Program Sahibi Paneli</span>
+          <span className="font-display text-lg hidden sm:inline">Patron Paneli</span>
         </div>
         <div className="ml-auto flex items-center gap-3 text-xs" style={{ color: SUBTLE }}>
           <span className="hidden sm:inline font-medium">{anaListesi.length}/{MAX_ANA_KULLANICI} Ana Kullanıcı</span>
@@ -3656,7 +3689,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
           <div className="flex items-center gap-3 px-3 py-3 mb-2 rounded-xl" style={{ background: BG }}>
             <div className="w-10 h-10 rounded-full flex items-center justify-center font-display font-semibold text-white text-sm shrink-0" style={{ background: `linear-gradient(135deg, ${ORANGE}, ${RED})` }}>PS</div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium truncate">Program Sahibi</p>
+              <p className="text-sm font-medium truncate">Patron</p>
               <p className="text-[11px]" style={{ color: SUBTLE }}>En üst yetkili</p>
             </div>
           </div>
@@ -3721,6 +3754,12 @@ function ProgramSahibiPaneli({ cikisYap }) {
                               </div>
                             </div>
                             <IconChevronDown size={16} color={SUBTLE} style={{ transform: acik ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                          </button>
+                          <button onClick={() => planDegistir(a.id, a.plan)}
+                            className="px-2.5 py-1 rounded-full text-[11px] font-semibold shrink-0 whitespace-nowrap self-start sm:self-center"
+                            style={a.plan === "premium" ? { color: "#fff", background: "#7C3AED" } : { color: SUBTLE, background: `${SUBTLE}1A` }}
+                            title="Plan durumunu değiştirmek için tıklayın">
+                            {a.plan === "premium" ? "⭐ Premium" : "Kısıtlı"}
                           </button>
                           <div className="flex items-center gap-1.5 w-full sm:w-56 shrink-0">
                             <GoogleInput value={adOnizleme[a.id] ?? (a.ad || "")} onChange={(e) => adGuncelle(a.id, e.target.value)}
@@ -3809,9 +3848,9 @@ function ProgramSahibiPaneli({ cikisYap }) {
 
           {sahipTab === "ayarlar" && (
             <div>
-              <Baslik title="Ayarlar" desc="Program Sahibi giriş şifrenizi buradan değiştirebilirsiniz." />
+              <Baslik title="Ayarlar" desc="Patron giriş şifrenizi buradan değiştirebilirsiniz." />
               <Kart className="mb-6 p-4 max-w-md">
-                <h2 className="font-display text-base font-medium mb-1">Program Sahibi Şifresi</h2>
+                <h2 className="font-display text-base font-medium mb-1">Patron Şifresi</h2>
                 <p className="text-xs mb-3" style={{ color: SUBTLE }}>Şu anki şifreniz: <span className="font-mono font-medium">{gosterilenSahipSifre}</span></p>
                 <div className="flex items-center gap-2">
                   <GoogleInput type="text" value={yeniSahipSifre} onChange={(e) => setYeniSahipSifre(e.target.value)} placeholder="Yeni şifre" className="flex-1" onKeyDown={(e) => e.key === "Enter" && sahipSifresiKaydet()} />
@@ -3838,7 +3877,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
                 <h2 className="font-display text-base font-medium mb-1" style={{ color: RED }}>Tehlikeli Bölge</h2>
                 <p className="text-xs mb-3" style={{ color: SUBTLE }}>
                   Bu, mevcut <strong>{anaListesi.length} Ana Kullanıcının</strong> tümünü ve onlara bağlı tüm Öğretmen/Veli
-                  girişlerini siler. İşlemden sonra Program Sahibi şifresi dışında hiçbir şifreyle giriş yapılamaz;
+                  girişlerini siler. İşlemden sonra Patron şifresi dışında hiçbir şifreyle giriş yapılamaz;
                   siz dilediğinizde yeni bir Ana Kullanıcı oluşturabilir, o da dilediğinde yeni öğretmen şifreleri oluşturabilir.
                   Öğrenci/not/yoklama verileri eski konumunda kalır, hemen silinmez; sadece erişim kesilir.
                 </p>
@@ -3873,6 +3912,9 @@ function StudentTracker() {
   const [tab, setTab] = useState("genel");
   const [menuAcik, setMenuAcik] = useState(false);
   const [students, setStudents] = useState([]);
+  // SINIFLAR: okulun kendi şube listesi (örn. "5-A"). Kayıtlı değilse eski sabit listeyle
+  // (SINIFLAR sabiti) başlar; bu Anasayfa yüklenene kadar dropdown'ların boş görünmemesi içindir.
+  const [siniflar, setSiniflarState] = useState(SINIFLAR);
   const [attendance, setAttendance] = useState({});
   const [attendanceMeta, setAttendanceMeta] = useState({});
   const [dersYoklama, setDersYoklama] = useState({});
@@ -3918,6 +3960,23 @@ function StudentTracker() {
   const [anaId, setAnaId] = useState(() => {
     try { return localStorage.getItem(ANA_KULLANICI_KIMLIK_ANAHTARI) || null; } catch (e) { return null; }
   });
+  // PLAN: Bu okulun Kısıtlı mı Premium mu olduğu, Patron panelinden tek tuşla değiştirilir.
+  // Yüklenene kadar (ve varsayılan olarak) güvenli tarafta kalıp Kısıtlı kabul edilir; eski/tekli
+  // kurulumlarda (anaId yok) bir okul kaydı olmadığından bu kısıtlama hiç uygulanmaz.
+  const [plan, setPlan] = useState(anaId ? "kisitli" : "premium");
+  useEffect(() => {
+    if (rol === null || rol === "sahip" || !anaId || !firebaseHazir) return;
+    const ref = db.ref(yonetimYoluAl() + "/anaKullanicilar/" + anaId + "/plan");
+    const cb = ref.on("value", (snap) => setPlan(snap.val() === "premium" ? "premium" : "kisitli"));
+    return () => ref.off("value", cb);
+  }, [anaId, rol]);
+  const [telegramKullaniciAdi, setTelegramKullaniciAdi] = useState("");
+  useEffect(() => {
+    if (rol === null || !firebaseHazir) return;
+    db.ref(yonetimYoluAl() + "/telegramKullaniciAdi").once("value")
+      .then((snap) => setTelegramKullaniciAdi(snap.val() || ""))
+      .catch(() => {});
+  }, [rol]);
   // kullaniciAdi: giriş yapan yöneticinin ya da öğretmenin adı soyadı (varsa) — kenar menüde ve
   // Anasayfa'da kişiselleştirilmiş bir karşılama göstermek için kullanılır.
   const [kullaniciAdi, setKullaniciAdi] = useState(() => {
@@ -3999,6 +4058,7 @@ function StudentTracker() {
             kocluklOgrenciler: [],
             ogretmenSifreleri: [],
             sinifTemizligi: {},
+            siniflar: SINIFLAR,
             veliSifreOnek: veliOnekVarsayilaniHesapla(anaId),
             dersProgrami: dpVarsayilanVeri(),
           };
@@ -4030,6 +4090,7 @@ function StudentTracker() {
           setKocluklOgrenciler(bosVeri.kocluklOgrenciler);
           setOgretmenSifreleri(bosVeri.ogretmenSifreleri);
           setSinifTemizligi(bosVeri.sinifTemizligi);
+          setSiniflarState(bosVeri.siniflar);
           setVeliSifreOnek(bosVeri.veliSifreOnek);
           setDersProgrami(bosVeri.dersProgrami);
           setBaglanti("bagli");
@@ -4065,6 +4126,7 @@ function StudentTracker() {
       setDavranisUyarilari(data.davranisUyarilari || {});
       setDavranisNotlari(data.davranisNotlari || {});
       setSinifTemizligi(data.sinifTemizligi || {});
+      setSiniflarState(Array.isArray(data.siniflar) && data.siniflar.length > 0 ? data.siniflar : SINIFLAR);
       setKocluklSiniflar(data.kocluklSiniflar || []);
       setKocluklOgrenciler(data.kocluklOgrenciler || []);
       setOgretmenSifreleri(data.ogretmenSifreleri || []);
@@ -4090,6 +4152,8 @@ function StudentTracker() {
     saveKey("students", next);
     guvenlikHaritasiniGuncelle(next, veliSifreOnekRef.current);
   }, []);
+  // Sınıf ekleme/silme/yeniden adlandırma: bkz. SinifYonetimi bileşeni (Öğrenciler sekmesinde).
+  const updateSiniflar = useCallback((next) => { setSiniflarState(next); saveKey("siniflar", next); }, []);
   const updateVeliSifreOnek = useCallback((next) => {
     setVeliSifreOnek(next);
     saveKey("veliSifreOnek", next);
@@ -4249,18 +4313,18 @@ function StudentTracker() {
 
         <main className="flex-1 min-w-0 px-4 sm:px-8 py-6 sm:py-8 max-w-4xl">
           {tab === "genel" && <Genel students={students} dersYoklama={dersYoklama} grades={grades} setTab={setTab} otoAyar={otoAyar} updateOtoAyar={updateOtoAyar} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} rol={rol} kullaniciAdi={kullaniciAdi} />}
-          {tab === "ogrenciler" && <Ogrenciler students={students} updateStudents={updateStudents} grades={grades} updateGrades={updateGrades} attendance={attendance} updateAttendance={updateAttendance} attendanceMeta={attendanceMeta} updateAttendanceMeta={updateAttendanceMeta} dersYoklama={dersYoklama} updateDersYoklama={updateDersYoklama} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} />}
-          {tab === "davranislar" && <Davranislar students={students} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari} kullaniciAdi={kullaniciAdi} rol={rol} />}
+          {tab === "ogrenciler" && <Ogrenciler students={students} updateStudents={updateStudents} grades={grades} updateGrades={updateGrades} attendance={attendance} updateAttendance={updateAttendance} attendanceMeta={attendanceMeta} updateAttendanceMeta={updateAttendanceMeta} dersYoklama={dersYoklama} updateDersYoklama={updateDersYoklama} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} updateSiniflar={updateSiniflar} />}
+          {tab === "davranislar" && (plan === "premium" ? <Davranislar students={students} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari} kullaniciAdi={kullaniciAdi} rol={rol} /> : <PremiumKilit baslik="Davranışlar" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "yoklama" && <Yoklama students={students} dersYoklama={dersYoklama} updateDersYoklama={updateDersYoklama} otoAyar={otoAyar} updateOtoAyar={updateOtoAyar} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} />}
           {tab === "notlar" && <Notlar students={students} grades={grades} updateGrades={updateGrades} />}
-          {tab === "kocluk" && <Kocluk kocluklSiniflar={kocluklSiniflar} updateKocluklSiniflar={updateKocluklSiniflar} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} students={students} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum} kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} kocDevam={kocDevam} updateKocDevam={updateKocDevam} />}
-          {tab === "denemeler" && <Denemeler students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} />}
-          {tab === "optik" && <OptikOkuyucuSayfa students={students} updateStudents={updateStudents} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} />}
-          {tab === "sinifTemizligi" && <SinifTemizligi sinifTemizligi={sinifTemizligi} updateSinifTemizligi={updateSinifTemizligi} />}
+          {tab === "kocluk" && <Kocluk kocluklSiniflar={kocluklSiniflar} updateKocluklSiniflar={updateKocluklSiniflar} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} students={students} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum} kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} kocDevam={kocDevam} updateKocDevam={updateKocDevam} plan={plan} kullaniciAdi={kullaniciAdi} />}
+          {tab === "denemeler" && <Denemeler students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} />}
+          {tab === "optik" && (plan === "premium" ? <OptikOkuyucuSayfa students={students} updateStudents={updateStudents} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} siniflar={siniflar} /> : <PremiumKilit baslik="Optik Okuyucu" telegramKullaniciAdi={telegramKullaniciAdi} />)}
+          {tab === "sinifTemizligi" && (plan === "premium" ? <SinifTemizligi sinifTemizligi={sinifTemizligi} updateSinifTemizligi={updateSinifTemizligi} /> : <PremiumKilit baslik="Sınıf Temizliği" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "karne" && <Karne students={students} grades={grades} attendance={attendance} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} setTab={setTab} />}
           {tab === "iletisim" && <Iletisim students={students} updateStudents={updateStudents} veliSifreOnek={veliSifreOnek} />}
-          {tab === "dersProgrami" && rol === "admin" && <DersProgrami dersProgrami={dersProgrami} updateDersProgrami={updateDersProgrami} />}
-          {tab === "yonetim" && rol === "admin" && <YonetimPaneli ogretmenSifreleri={ogretmenSifreleri} updateOgretmenSifreleri={updateOgretmenSifreleri} veliSifreOnek={veliSifreOnek} updateVeliSifreOnek={updateVeliSifreOnek} />}
+          {tab === "dersProgrami" && rol === "admin" && (plan === "premium" ? <DersProgrami dersProgrami={dersProgrami} updateDersProgrami={updateDersProgrami} /> : <PremiumKilit baslik="Ders Programı Oluşturucu" telegramKullaniciAdi={telegramKullaniciAdi} />)}
+          {tab === "yonetim" && rol === "admin" && <YonetimPaneli ogretmenSifreleri={ogretmenSifreleri} updateOgretmenSifreleri={updateOgretmenSifreleri} veliSifreOnek={veliSifreOnek} updateVeliSifreOnek={updateVeliSifreOnek} plan={plan} />}
         </main>
       </div>
     </div>
@@ -4986,8 +5050,45 @@ async function ogrenciSinifListesiPdfOku(dosya) {
   return { ogrenciler, varsayilanSinif };
 }
 
-function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance, updateAttendance, attendanceMeta, updateAttendanceMeta, dersYoklama, updateDersYoklama, denemeSonuclari, updateDenemeSonuclari, denemeEkBilgi, updateDenemeEkBilgi, davranisUyarilari, updateDavranisUyarilari, davranisNotlari, updateDavranisNotlari, otoGecmis, updateOtoGecmis, kocluklOgrenciler, updateKocluklOgrenciler }) {
-  const [ad, setAd] = useState(""); const [sinif, setSinif] = useState(SINIFLAR[0]); const [no, setNo] = useState("");
+function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance, updateAttendance, attendanceMeta, updateAttendanceMeta, dersYoklama, updateDersYoklama, denemeSonuclari, updateDenemeSonuclari, denemeEkBilgi, updateDenemeEkBilgi, davranisUyarilari, updateDavranisUyarilari, davranisNotlari, updateDavranisNotlari, otoGecmis, updateOtoGecmis, kocluklOgrenciler, updateKocluklOgrenciler, plan, telegramKullaniciAdi, siniflar, updateSiniflar }) {
+  const [ad, setAd] = useState(""); const [sinif, setSinif] = useState(siniflar[0] || ""); const [no, setNo] = useState("");
+  // SINIF YÖNETİMİ: ekleme/silme/yeniden adlandırma. Silme, o sınıfta hâlâ öğrenci varsa
+  // engellenir (önce öğrenciler başka sınıfa taşınmalı/silinmeli). Yeniden adlandırma, o
+  // sınıftaki tüm öğrencilerin kaydını da otomatik olarak yeni isme günceller.
+  const [sinifPaneliAcik, setSinifPaneliAcik] = useState(false);
+  const [yeniSinifAdi, setYeniSinifAdi] = useState("");
+  const [duzenlenenSinifAdi, setDuzenlenenSinifAdi] = useState(null); // düzenlenmekte olan eski isim
+  const [duzenlenenSinifYeniAd, setDuzenlenenSinifYeniAd] = useState("");
+  const sinifOgrenciSayisi = (ad) => students.filter((s) => s.sinif === ad).length;
+  const sinifEkle = () => {
+    const deger = yeniSinifAdi.trim();
+    if (!deger) return;
+    if (siniflar.includes(deger)) { window.alert("Bu isimde bir sınıf zaten var."); return; }
+    updateSiniflar([...siniflar, deger]);
+    setYeniSinifAdi("");
+  };
+  const sinifSilOnayla = (hedefAd) => {
+    const sayi = sinifOgrenciSayisi(hedefAd);
+    if (sayi > 0) {
+      window.alert(`"${hedefAd}" sınıfında ${sayi} öğrenci var. Sınıfı silmeden önce bu öğrencileri başka bir sınıfa taşıyın ya da silin.`);
+      return;
+    }
+    if (!window.confirm(`"${hedefAd}" sınıfını silmek istediğinize emin misiniz?`)) return;
+    updateSiniflar(siniflar.filter((s) => s !== hedefAd));
+  };
+  const sinifDuzenlemeyeBasla = (hedefAd) => { setDuzenlenenSinifAdi(hedefAd); setDuzenlenenSinifYeniAd(hedefAd); };
+  const sinifYenidenAdlandirKaydet = () => {
+    const eskiAd = duzenlenenSinifAdi;
+    const yeniAd = duzenlenenSinifYeniAd.trim();
+    if (!yeniAd) return;
+    if (yeniAd !== eskiAd && siniflar.includes(yeniAd)) { window.alert("Bu isimde bir sınıf zaten var."); return; }
+    if (yeniAd !== eskiAd) {
+      updateSiniflar(siniflar.map((s) => (s === eskiAd ? yeniAd : s)));
+      const etkilenen = students.some((s) => s.sinif === eskiAd);
+      if (etkilenen) updateStudents(students.map((s) => (s.sinif === eskiAd ? { ...s, sinif: yeniAd } : s)));
+    }
+    setDuzenlenenSinifAdi(null); setDuzenlenenSinifYeniAd("");
+  };
   const [sinifFiltre, setSinifFiltre] = useState("");
   const [arama, setArama] = useState("");
   const [duzenlenenId, setDuzenlenenId] = useState(null);
@@ -5005,7 +5106,7 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
   const [pdfHata, setPdfHata] = useState("");
   const [pdfDosyaAdi, setPdfDosyaAdi] = useState("");
   const [pdfOnizleme, setPdfOnizleme] = useState(null); // [{ ad, no, dahil }]
-  const [pdfSinif, setPdfSinif] = useState(SINIFLAR[0]);
+  const [pdfSinif, setPdfSinif] = useState(siniflar[0] || "");
   const [pdfBasari, setPdfBasari] = useState("");
   // Yinelenen isim/numara bildirimlerinden "Kaldır" ile kapatılanları saklar (tarayıcıda kalıcı).
   // Anahtar, o gruptaki öğrenci id'lerinin sıralı birleşimidir; aynı öğrenci grubu için tekrar
@@ -5026,8 +5127,13 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
   const birlestirmeyeTekEkle = (s) => {
     setBirlestirA(s.id); setBirlestirAramaA(""); setBirlestirB(""); setBirlestirAramaB(""); setAnaKayit("");
   };
+  const KISITLI_OGRENCI_LIMITI = 20;
   const ekle = () => {
     if (!ad.trim()) return;
+    if (plan !== "premium" && students.length >= KISITLI_OGRENCI_LIMITI) {
+      window.alert(`Kısıtlı planda en fazla ${KISITLI_OGRENCI_LIMITI} öğrenci ekleyebilirsiniz. Sınırsız öğrenci için Premium'a geçin.`);
+      return;
+    }
     updateStudents([...students, { id: uid(), ad: ad.trim(), sinif: sinif, no: no.trim() }]);
     setAd(""); setNo("");
   };
@@ -5070,14 +5176,17 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
     const mevcutAnahtarlar = new Set(students.map((s) => `${s.ad.trim().toLocaleLowerCase("tr")}||${(s.no || "").trim()}||${s.sinif}`));
     const yeniler = [];
     let atlanan = 0;
+    const kalanKontenjan = plan !== "premium" ? Math.max(0, KISITLI_OGRENCI_LIMITI - students.length) : Infinity;
+    let kontenjanDoldu = false;
     secilenler.forEach((o) => {
       const anahtar = `${o.ad.trim().toLocaleLowerCase("tr")}||${(o.no || "").trim()}||${pdfSinif}`;
       if (mevcutAnahtarlar.has(anahtar)) { atlanan++; return; }
+      if (yeniler.length >= kalanKontenjan) { kontenjanDoldu = true; return; }
       mevcutAnahtarlar.add(anahtar);
       yeniler.push({ id: uid(), ad: o.ad.trim(), sinif: pdfSinif, no: (o.no || "").trim() });
     });
     if (yeniler.length > 0) updateStudents([...students, ...yeniler]);
-    setPdfBasari(`${yeniler.length} öğrenci "${pdfSinif}" şubesine eklendi.` + (atlanan > 0 ? ` ${atlanan} kayıt zaten aynı ad/no/şube ile mevcut olduğu için atlandı.` : ""));
+    setPdfBasari(`${yeniler.length} öğrenci "${pdfSinif}" şubesine eklendi.` + (atlanan > 0 ? ` ${atlanan} kayıt zaten aynı ad/no/şube ile mevcut olduğu için atlandı.` : "") + (kontenjanDoldu ? ` Kısıtlı plan ${KISITLI_OGRENCI_LIMITI} öğrenci sınırına ulaşıldığı için bazı kayıtlar eklenmedi.` : ""));
     setPdfOnizleme(null); setPdfDosyaAdi("");
   };
   const filtreliListe = useMemo(() => {
@@ -5208,7 +5317,7 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
   const duzenlemeBaslat = (s) => {
     setDuzenlenenId(s.id);
     setDuzenlenenAd(s.ad || "");
-    setDuzenlenenSinif(s.sinif || SINIFLAR[0]);
+    setDuzenlenenSinif(s.sinif || siniflar[0] || "");
     setDuzenlenenNo(s.no || "");
   };
   const duzenlemeIptal = () => { setDuzenlenenId(null); };
@@ -5515,7 +5624,7 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
       <Kart className="flex flex-col sm:flex-row gap-2 mb-4 p-4">
         <GoogleInput value={ad} onChange={(e) => setAd(e.target.value)} placeholder="Ad Soyad" className="flex-1" onKeyDown={(e) => e.key === "Enter" && ekle()} />
         <GoogleSelect value={sinif} onChange={(e) => setSinif(e.target.value)} className="sm:w-32">
-          {SINIFLAR.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
+          {siniflar.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
         </GoogleSelect>
         <GoogleInput value={no} onChange={(e) => setNo(e.target.value)} placeholder="Öğrenci No" className="sm:w-32" onKeyDown={(e) => e.key === "Enter" && ekle()} />
         <GoogleButton onClick={ekle} disabled={!ad.trim()}><IconPlus size={16} color="#fff" />Ekle</GoogleButton>
@@ -5611,9 +5720,46 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
         )}
       </Kart>
 
+      <Kart className="mb-6 p-4">
+        <button onClick={() => setSinifPaneliAcik((v) => !v)} className="flex items-center justify-between w-full text-left">
+          <span className="text-sm font-medium">Sınıfları Yönet ({siniflar.length})</span>
+          <IconChevronDown size={16} color={SUBTLE} style={{ transform: sinifPaneliAcik ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+        </button>
+        {sinifPaneliAcik && (
+          <div className="mt-3">
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {siniflar.length === 0 && <span className="text-xs" style={{ color: SUBTLE }}>Henüz sınıf eklenmedi.</span>}
+              {siniflar.map((sn) => (
+                <div key={sn} className="flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-full text-xs" style={{ background: BG }}>
+                  {duzenlenenSinifAdi === sn ? (
+                    <>
+                      <GoogleInput value={duzenlenenSinifYeniAd} onChange={(e) => setDuzenlenenSinifYeniAd(e.target.value)}
+                        className="!py-0.5 !px-2 !text-xs w-24" autoFocus onKeyDown={(e) => e.key === "Enter" && sinifYenidenAdlandirKaydet()} />
+                      <button onClick={sinifYenidenAdlandirKaydet} className="p-1 rounded-full hover:bg-white" title="Kaydet"><IconCheck size={12} color={GREEN} /></button>
+                      <button onClick={() => setDuzenlenenSinifAdi(null)} className="p-1 rounded-full hover:bg-white" title="Vazgeç"><IconX size={12} color={SUBTLE} /></button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium">{sn}</span>
+                      <span style={{ color: SUBTLE }}>({sinifOgrenciSayisi(sn)})</span>
+                      <button onClick={() => sinifDuzenlemeyeBasla(sn)} className="p-1 rounded-full hover:bg-white" title="Yeniden adlandır"><IconEdit size={12} color={SUBTLE} /></button>
+                      <button onClick={() => sinifSilOnayla(sn)} className="p-1 rounded-full hover:bg-white" title="Sil"><IconTrash size={12} color={RED} /></button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <GoogleInput value={yeniSinifAdi} onChange={(e) => setYeniSinifAdi(e.target.value)} placeholder="Yeni sınıf adı (örn. 5-A)" className="flex-1 max-w-xs" onKeyDown={(e) => e.key === "Enter" && sinifEkle()} />
+              <button onClick={sinifEkle} className="px-4 py-2.5 rounded-full text-sm font-medium text-white shrink-0" style={{ background: BLUE }}>Ekle</button>
+            </div>
+          </div>
+        )}
+      </Kart>
+
       <Kart className="flex flex-wrap items-center gap-2 mb-6 p-3">
         <IconFilter size={15} color={SUBTLE} />
-        <SinifSecici value={sinifFiltre} onChange={setSinifFiltre} className="sm:w-40" />
+        <SinifSecici value={sinifFiltre} onChange={setSinifFiltre} siniflar={siniflar} className="sm:w-40" />
         <GoogleInput value={arama} onChange={(e) => setArama(e.target.value)} placeholder="İsim veya numara ara" className="flex-1 min-w-[160px]" />
         {sinifFiltre && (
           <button onClick={topluSilOnayla} disabled={filtreliListe.length === 0} title="Listelenen öğrencileri toplu sil" className="text-xs font-medium px-3 py-2 rounded-full flex items-center gap-1 shrink-0 disabled:opacity-40" style={{ color: RED, background: `${RED}14` }}>
@@ -5629,7 +5775,7 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
                 <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white shrink-0" style={{ background: [BLUE, GREEN, YELLOW, RED][i % 4] }}>{(duzenlenenAd || s.ad).charAt(0).toUpperCase()}</div>
                 <GoogleInput value={duzenlenenAd} onChange={(e) => setDuzenlenenAd(e.target.value)} placeholder="Ad Soyad" className="flex-1 min-w-[100px]" onKeyDown={(e) => e.key === "Enter" && duzenlemeKaydet(s.id)} />
                 <GoogleSelect value={duzenlenenSinif} onChange={(e) => setDuzenlenenSinif(e.target.value)} className="w-28">
-                  {SINIFLAR.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
+                  {siniflar.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
                 </GoogleSelect>
                 <GoogleInput value={duzenlenenNo} onChange={(e) => setDuzenlenenNo(e.target.value)} placeholder="No" className="w-24" onKeyDown={(e) => e.key === "Enter" && duzenlemeKaydet(s.id)} />
                 <button onClick={() => duzenlemeKaydet(s.id)} className="p-1.5 rounded-full hover:bg-gray-100 shrink-0" title="Kaydet"><IconCheck size={16} color={GREEN} strokeWidth={3} /></button>
@@ -5678,7 +5824,7 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
                 <div className="flex flex-wrap items-center gap-2 mb-3">
                   <span className="text-xs font-medium" style={{ color: SUBTLE }}>Eklenecek şube:</span>
                   <GoogleSelect value={pdfSinif} onChange={(e) => setPdfSinif(e.target.value)} className="w-28">
-                    {SINIFLAR.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
+                    {siniflar.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
                   </GoogleSelect>
                   <span className="text-xs" style={{ color: SUBTLE }}>({pdfOnizleme.filter((o) => o.dahil).length} / {pdfOnizleme.length} öğrenci seçili)</span>
                   <div className="flex items-center gap-1.5 ml-auto">
@@ -6420,7 +6566,7 @@ function SoruCozumTakip({ students, siniflar, kayitlar, updateKayitlar, tarih, s
   );
 }
 
-function KoclukYonetim({ siniflar, updateSiniflar, ogrenciler, updateOgrenciler, students = [] }) {
+function KoclukYonetim({ siniflar, updateSiniflar, ogrenciler, updateOgrenciler, students = [], plan, kullaniciAdi }) {
   const [yeniSinif, setYeniSinif] = useState("");
   const [acikSinif, setAcikSinif] = useState(null);
   const [ekleModu, setEkleModu] = useState("mevcut"); // mevcut | manuel
@@ -6453,15 +6599,30 @@ function KoclukYonetim({ siniflar, updateSiniflar, ogrenciler, updateOgrenciler,
       .sort((a, b) => a.ad.localeCompare(b.ad, "tr"));
   }, [students, mevcutArama]);
 
+  // KISITLI PLAN: her öğretmen (kullaniciAdi ile ayırt edilir) en fazla 1 öğrenciyi koçluğa
+  // ekleyebilir; sınırsız için Premium gerekir. "ekleyen" alanı bu yüzden her yeni kayıtta tutulur.
+  const kisitliLimitAsildi = () => {
+    if (plan === "premium") return false;
+    const benimEklediklerim = (ogrenciler || []).filter((o) => o.ekleyen && o.ekleyen === (kullaniciAdi || "")).length;
+    return benimEklediklerim >= 1;
+  };
   const mevcutOgrenciEkle = () => {
     const kaynak = students.find((s) => s.id === mevcutSecili);
     if (!kaynak || !acikSinif) return;
-    updateOgrenciler([...ogrenciler, { id: uid(), ad: kaynak.ad, sinif: acikSinif, no: kaynak.no || "", kaynakId: kaynak.id }]);
+    if (kisitliLimitAsildi()) {
+      window.alert("Kısıtlı planda her öğretmen koçluğa en fazla 1 öğrenci ekleyebilir. Sınırsız için Premium'a geçin.");
+      return;
+    }
+    updateOgrenciler([...ogrenciler, { id: uid(), ad: kaynak.ad, sinif: acikSinif, no: kaynak.no || "", kaynakId: kaynak.id, ekleyen: kullaniciAdi || "" }]);
     setMevcutSecili(""); setMevcutArama("");
   };
   const manuelOgrenciEkle = () => {
     if (!ad.trim() || !acikSinif) return;
-    updateOgrenciler([...ogrenciler, { id: uid(), ad: ad.trim(), sinif: acikSinif, no: no.trim() }]);
+    if (kisitliLimitAsildi()) {
+      window.alert("Kısıtlı planda her öğretmen koçluğa en fazla 1 öğrenci ekleyebilir. Sınırsız için Premium'a geçin.");
+      return;
+    }
+    updateOgrenciler([...ogrenciler, { id: uid(), ad: ad.trim(), sinif: acikSinif, no: no.trim(), ekleyen: kullaniciAdi || "" }]);
     setAd(""); setNo("");
   };
   const ogrenciSil = (id) => updateOgrenciler(ogrenciler.filter((o) => o.id !== id));
@@ -6609,7 +6770,7 @@ function KoclukYonetim({ siniflar, updateSiniflar, ogrenciler, updateOgrenciler,
   );
 }
 
-function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, updateKocluklOgrenciler, students, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, kocDevam, updateKocDevam }) {
+function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, updateKocluklOgrenciler, students, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, kocDevam, updateKocDevam, plan, kullaniciAdi }) {
   const [altSekme, setAltSekme] = useState("siniflar");
   const [tarih, setTarih] = useState(todayISO());
   const [sinifFiltre, setSinifFiltre] = useState(kocluklSiniflar[0] || "");
@@ -6639,7 +6800,7 @@ function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, upd
         </div>
       </div>
       {altSekme === "siniflar" && (
-        <KoclukYonetim siniflar={kocluklSiniflar} updateSiniflar={updateKocluklSiniflar} ogrenciler={kocluklOgrenciler} updateOgrenciler={updateKocluklOgrenciler} students={students} />
+        <KoclukYonetim siniflar={kocluklSiniflar} updateSiniflar={updateKocluklSiniflar} ogrenciler={kocluklOgrenciler} updateOgrenciler={updateKocluklOgrenciler} students={students} plan={plan} kullaniciAdi={kullaniciAdi} />
       )}
       {altSekme === "devam" && (
         <ArtiEksiTakip students={kocluklOgrenciler} siniflar={kocluklSiniflar} kayitlar={kocDevam} updateKayitlar={updateKocDevam}
@@ -8604,7 +8765,7 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
   );
 }
 
-function Denemeler({ students, updateStudents, denemeler, denemeSonuclari, updateDenemeSonuclari, updateDenemeler, denemeEkBilgi, updateDenemeEkBilgi }) {
+function Denemeler({ students, updateStudents, denemeler, denemeSonuclari, updateDenemeSonuclari, updateDenemeler, denemeEkBilgi, updateDenemeEkBilgi, plan, telegramKullaniciAdi, siniflar }) {
   const [altSekme, setAltSekme] = useState("giris");
   // denemeler dizisine yeni denemeler sona eklenir, bu yüzden en son yapılan deneme dizinin son
   // elemanıdır — sekmeye girildiğinde varsayılan olarak o seçili gelsin diye [0] yerine son eleman alınır.
@@ -8642,7 +8803,7 @@ function Denemeler({ students, updateStudents, denemeler, denemeSonuclari, updat
         })}
       </div>
       {altSekme === "giris" && <DenemeGiris students={students} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} denemeSecili={denemeSecili} setDenemeSecili={setDenemeSecili} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre} altSekme={altSekme} setAltSekme={setAltSekme} />}
-      {altSekme === "iceAktar" && <DenemeIceAktar students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} />}
+      {altSekme === "iceAktar" && <DenemeIceAktar students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} />}
       {altSekme === "ilk50" && <DenemeIlk50 students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} />}
       {altSekme === "sinif" && <DenemeSinifKiyas students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} />}
       {altSekme === "ders" && <DenemeDersKiyas students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} />}
@@ -9497,7 +9658,7 @@ function pdfCokSatirliKayitlariAyikla(satirlar, dersSirasi) {
 // PDF ya da Excel dosyasından deneme sonuçlarını okuyup, o an giriş yapılmış okulun (Ana Kullanıcının)
 // verisine kaydeden ekran. Her okul kendi hesabıyla giriş yaptığı için, buradan yüklenen sonuçlar
 // otomatik olarak sadece o okulun verisine işlenir — başka bir okulun verisi hiç görülmez/etkilenmez.
-function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, updateDenemeSonuclari, updateDenemeler, denemeEkBilgi, updateDenemeEkBilgi }) {
+function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, updateDenemeSonuclari, updateDenemeler, denemeEkBilgi, updateDenemeEkBilgi, plan, telegramKullaniciAdi, siniflar = SINIFLAR }) {
   const [tur, setTur] = useState(null); // "excel" | "pdf"
   const [dosyaAdi, setDosyaAdi] = useState("");
   const [yukleniyor, setYukleniyor] = useState(false);
@@ -9511,7 +9672,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
   const [hedefDenemeId, setHedefDenemeId] = useState(denemeler[0]?.id || "");
   const [yeniDenemeAdi, setYeniDenemeAdi] = useState("");
   const [otoOgrenciOlustur, setOtoOgrenciOlustur] = useState(false);
-  const [hedefSinif, setHedefSinif] = useState(SINIFLAR[0]);
+  const [hedefSinif, setHedefSinif] = useState(siniflar[0] || "");
   const [aiYukleniyor, setAiYukleniyor] = useState(false);
   const [aiIlerleme, setAiIlerleme] = useState("");
 
@@ -9737,7 +9898,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
         // öneriye çeviririz — öğrenciler henüz sistemde yoksa "otomatik oluştur" ile birlikte
         // doğru şubeye eklenmelerini kolaylaştırır.
         const sinifSayaci = {};
-        enIyiYapisalSonuc.forEach((r) => { if (r.sinif && SINIFLAR.includes(r.sinif)) sinifSayaci[r.sinif] = (sinifSayaci[r.sinif] || 0) + 1; });
+        enIyiYapisalSonuc.forEach((r) => { if (r.sinif && siniflar.includes(r.sinif)) sinifSayaci[r.sinif] = (sinifSayaci[r.sinif] || 0) + 1; });
         const enCokGecenSinif = Object.entries(sinifSayaci).sort((a, b) => b[1] - a[1])[0];
         if (enCokGecenSinif) setHedefSinif(enCokGecenSinif[0]);
         setOnizleme(enIyiYapisalSonuc);
@@ -9793,7 +9954,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
       }
       const sonuclandi = kayitlar.map((r) => ({ ...r, ogrenciId: r.no && noHaritasi[r.no] ? noHaritasi[r.no] : null }));
       const sinifSayaci = {};
-      sonuclandi.forEach((r) => { if (r.sinif && SINIFLAR.includes(r.sinif)) sinifSayaci[r.sinif] = (sinifSayaci[r.sinif] || 0) + 1; });
+      sonuclandi.forEach((r) => { if (r.sinif && siniflar.includes(r.sinif)) sinifSayaci[r.sinif] = (sinifSayaci[r.sinif] || 0) + 1; });
       const enCokGecenSinif = Object.entries(sinifSayaci).sort((a, b) => b[1] - a[1])[0];
       if (enCokGecenSinif) setHedefSinif(enCokGecenSinif[0]);
       setOnizleme(sonuclandi);
@@ -9810,7 +9971,15 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
   const yeniDenemeOlustur = () => {
     const ad = yeniDenemeAdi.trim();
     if (!ad) return;
-    const yeni = { id: uid(), ad };
+    if (plan !== "premium") {
+      const buAy = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+      const buAyOlusturulan = (denemeler || []).some((d) => d.olusturmaZamani && new Date(d.olusturmaZamani).toISOString().slice(0, 7) === buAy);
+      if (buAyOlusturulan) {
+        window.alert("Kısıtlı planda ayda en fazla 1 yeni deneme oluşturabilirsiniz. Sınırsız için Premium'a geçin.");
+        return;
+      }
+    }
+    const yeni = { id: uid(), ad, olusturmaZamani: Date.now() };
     updateDenemeler([...denemeler, yeni]);
     setHedefDenemeId(yeni.id);
     setYeniDenemeAdi("");
@@ -9840,8 +10009,8 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
         if (kaydedilebilirMi(r) && !r.ogrenciId && Object.keys(r.dersSonuc).length > 0) {
           const yeniId = uid();
           // Satırda PDF/AI'dan geçerli bir şube okunduysa öğrenci KENDİ şubesine eklenir; şube hiç
-          // okunamadıysa (SINIFLAR listesinde yoksa) üstteki tek "hedef şube" seçimi yedek olarak kullanılır.
-          const oncelikliSinif = r.sinif && SINIFLAR.includes(r.sinif) ? r.sinif : hedefSinif;
+          // okunamadıysa (okulun kayıtlı sınıf listesinde yoksa) üstteki tek "hedef şube" seçimi yedek olarak kullanılır.
+          const oncelikliSinif = r.sinif && siniflar.includes(r.sinif) ? r.sinif : hedefSinif;
           yeniOgrenciler.push({ id: yeniId, ad: r.ad || `Öğrenci ${r.no || ""}`.trim(), sinif: oncelikliSinif, no: r.no || "" });
           return { ...r, ogrenciId: yeniId };
         }
@@ -9911,19 +10080,30 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
           <div className="flex items-center gap-2 mb-4">
             <span className="text-xs" style={{ color: SUBTLE }}>Yeni öğrenciler PDF'te/AI'da okunan kendi şubesine eklenir; şube okunamayan satırlar için yedek şube:</span>
             <GoogleSelect value={hedefSinif} onChange={(e) => setHedefSinif(e.target.value)} className="sm:w-32">
-              {SINIFLAR.map((s) => <option key={s} value={s}>{s}</option>)}
+              {siniflar.map((s) => <option key={s} value={s}>{s}</option>)}
             </GoogleSelect>
           </div>
         )}
         {!otoOgrenciOlustur && <div className="mb-4" />}
 
-        <label className="flex flex-col items-center justify-center gap-2 px-6 py-8 rounded-xl border-2 border-dashed cursor-pointer text-center"
-          style={{ borderColor: BORDER, background: BG }}>
-          <IconChart size={22} color={ORANGE} />
-          <span className="text-sm font-medium">{dosyaAdi || "PDF veya Excel/CSV dosyası seçin"}</span>
-          <span className="text-[11px]" style={{ color: SUBTLE }}>.pdf · .xlsx · .xls · .csv</span>
-          <input type="file" accept=".pdf,.xlsx,.xls,.csv" className="hidden" onChange={dosyaSec} />
-        </label>
+        {plan === "premium" ? (
+          <label className="flex flex-col items-center justify-center gap-2 px-6 py-8 rounded-xl border-2 border-dashed cursor-pointer text-center"
+            style={{ borderColor: BORDER, background: BG }}>
+            <IconChart size={22} color={ORANGE} />
+            <span className="text-sm font-medium">{dosyaAdi || "PDF veya Excel/CSV dosyası seçin"}</span>
+            <span className="text-[11px]" style={{ color: SUBTLE }}>.pdf · .xlsx · .xls · .csv</span>
+            <input type="file" accept=".pdf,.xlsx,.xls,.csv" className="hidden" onChange={dosyaSec} />
+          </label>
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-2 px-6 py-8 rounded-xl border-2 border-dashed text-center" style={{ borderColor: BORDER, background: BG }}>
+            <span className="text-lg">⭐</span>
+            <span className="text-sm font-medium">PDF/Excel'den toplu aktarma Premium özelliktir</span>
+            <span className="text-[11px] max-w-xs" style={{ color: SUBTLE }}>Kısıtlı planda sonuçları yukarıdaki "Deneme Ekle" ile oluşturduğunuz denemeye, "Giriş" sekmesinden elle girebilirsiniz.</span>
+            {telegramKullaniciAdi && (
+              <a href={`https://t.me/${telegramKullaniciAdi}`} target="_blank" rel="noopener noreferrer" className="mt-1 px-4 py-2 rounded-full text-xs font-medium text-white" style={{ background: BLUE }}>İletişime Geçin</a>
+            )}
+          </div>
+        )}
 
         {yukleniyor && <p className="text-sm mt-3" style={{ color: SUBTLE }}>Dosya okunuyor…</p>}
         {hata && <p className="text-sm mt-3" style={{ color: RED }}>{hata}</p>}
@@ -10025,7 +10205,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
               <tbody>
                 {onizleme.map((r, i) => {
                   const yeniOlarakEklenecek = kaydedilebilirMi(r) && !r.ogrenciId && otoOgrenciOlustur && Object.keys(r.dersSonuc).length > 0;
-                  const eklenecekSinif = r.sinif && SINIFLAR.includes(r.sinif) ? r.sinif : hedefSinif;
+                  const eklenecekSinif = r.sinif && siniflar.includes(r.sinif) ? r.sinif : hedefSinif;
                   // Sınıf bilgisi okunamadığı için ders sayıları da bozuk görünen AMA satır zaten bilinen
                   // bir öğrenciyle eşleştirilmiş durumlar artık ENGELLENMİYOR (kaydedilebilirMi(r) true) —
                   // bu yüzden onları sert "kaydedilmeyecek" kırmızısıyla değil, "gözden geçir ama
@@ -11313,12 +11493,12 @@ function OgrenciCevapDosyaIceAktarModal({ ogrenciAdi, onClose, onUygula }) {
   );
 }
 
-function OptikOkuyucuSayfa({ students, updateStudents, denemeler, updateDenemeler, denemeSonuclari, updateDenemeSonuclari }) {
+function OptikOkuyucuSayfa({ students, updateStudents, denemeler, updateDenemeler, denemeSonuclari, updateDenemeSonuclari, siniflar = SINIFLAR }) {
   const [altSekme, setAltSekme] = useState("fotograf");
   const altSekmeler = [["fotograf", "Fotoğrafla Oku"], ["iceAktar", "Optik Uygulamasından İçe Aktar (Excel/PDF)"]];
   const [denemeSecili, setDenemeSecili] = useState(denemeler[0]?.id || "");
   useEffect(() => { if (!denemeSecili && denemeler.length) setDenemeSecili(denemeler[0].id); }, [denemeler]);
-  const [sinifFiltre, setSinifFiltre] = useState(SINIFLAR[0]);
+  const [sinifFiltre, setSinifFiltre] = useState(siniflar[0] || "");
   const sinifOgrencileri = useMemo(() => students.filter((s) => s.sinif === sinifFiltre).sort((a, b) => a.ad.localeCompare(b.ad, "tr")), [students, sinifFiltre]);
   const [ogrenciSecili, setOgrenciSecili] = useState("");
   useEffect(() => { setOgrenciSecili(""); }, [sinifFiltre, denemeSecili]);
@@ -11369,7 +11549,7 @@ function OptikOkuyucuSayfa({ students, updateStudents, denemeler, updateDenemele
       </div>
 
       {altSekme === "iceAktar" ? (
-        <DenemeIceAktar students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} />
+        <DenemeIceAktar students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} siniflar={siniflar} />
       ) : (
       <>
       <Kart className="flex flex-wrap items-center gap-2 mb-6 p-4">
