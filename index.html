@@ -183,6 +183,62 @@ const SINIF_SEVIYELERI = [5, 6, 7, 8];
 const SUBELER = ["A", "B", "C", "D", "E", "F"];
 const SINIFLAR = SINIF_SEVIYELERI.flatMap((sv) => SUBELER.map((sb) => `${sv}-${sb}`));
 const DERSLER = ["Türkçe", "Sosyal Bilgiler", "Din Kültürü ve Ahlak Bilgisi", "İngilizce", "Matematik", "Fen Bilimleri"];
+// Ders İçi (ödev takip / kitap kontrolü / derse katılım) sekmesindeki ders listesinin varsayılanı.
+// Bu liste DERSLER'den bağımsız olarak "Ders İçi" ekranından eklenip/düzenlenip/silinebilir.
+const DERS_ICI_VARSAYILAN_DERSLER = DERSLER.slice();
+// Ders İçi kayıtları { [tarihISO]: { [ders]: { [ogrenciId]: {durum, ekleyen, zaman} } } } şeklinde
+// tutulur — aynı gün farklı öğretmenler farklı dersler için (hatta aynı ders için, en son giren geçerli
+// olacak şekilde) artı/eksi verebilir, çünkü kayıt ders bazında ayrı bir alt yolda saklanır.
+function dersIciSayim(kayit, ogrenciId) {
+  let arti = 0, eksi = 0;
+  Object.values(kayit || {}).forEach((gunKaydi) => {
+    Object.values(gunKaydi || {}).forEach((dersKaydi) => {
+      const d = dersKaydi ? dersKaydi[ogrenciId] : undefined;
+      const durum = d && typeof d === "object" ? d.durum : d;
+      if (durum === "arti") arti++; else if (durum === "eksi") eksi++;
+    });
+  });
+  return { arti, eksi };
+}
+// Belirli bir tarihte, belirli bir öğrenci için ders bazlı kayıtları düz bir listeye çevirir.
+function dersIciGunKayitlari(kayit, tarih, ogrenciId) {
+  const gunKaydi = (kayit || {})[tarih] || {};
+  const liste = [];
+  Object.entries(gunKaydi).forEach(([ders, dersKaydi]) => {
+    const d = dersKaydi ? dersKaydi[ogrenciId] : undefined;
+    const durum = d && typeof d === "object" ? d.durum : d;
+    const ekleyen = d && typeof d === "object" ? d.ekleyen : "";
+    if (durum) liste.push({ ders, durum, ekleyen });
+  });
+  return liste;
+}
+// Belirli bir ders için (tüm tarihler genelinde), belirli bir öğrencinin artı/eksi sayısını hesaplar.
+// dersIciSayim'den farkı: tüm dersleri değil, sadece verilen "ders" parametresine ait kayıtları sayar.
+function dersIciSayimDers(kayit, ogrenciId, ders) {
+  let arti = 0, eksi = 0;
+  Object.values(kayit || {}).forEach((gunKaydi) => {
+    const dersKaydi = (gunKaydi || {})[ders];
+    const d = dersKaydi ? dersKaydi[ogrenciId] : undefined;
+    const durum = d && typeof d === "object" ? d.durum : d;
+    if (durum === "arti") arti++; else if (durum === "eksi") eksi++;
+  });
+  return { arti, eksi };
+}
+// Verilen Ders İçi kayıtlarının (ödev/kitap/katılım) hepsinde birden, belirli bir öğrenci için en az
+// bir kaydı bulunan ders adlarının listesini (tekrarsız, alfabetik) döner — ders seçim menüsü içindir.
+function dersIciMevcutDerslerHesapla(kayitlar, ogrenciId) {
+  const set = new Set();
+  kayitlar.forEach((kayit) => {
+    Object.values(kayit || {}).forEach((gunKaydi) => {
+      Object.entries(gunKaydi || {}).forEach(([ders, dersKaydi]) => {
+        const d = dersKaydi ? dersKaydi[ogrenciId] : undefined;
+        const durum = d && typeof d === "object" ? d.durum : d;
+        if (durum) set.add(ders);
+      });
+    });
+  });
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "tr"));
+}
 const NOT_TURLERI = ["1. Sınav", "2. Sınav", "1. Sözlü", "2. Sözlü"];
 const DERS_SORU = { "Türkçe": 20, "Sosyal Bilgiler": 10, "Din Kültürü ve Ahlak Bilgisi": 10, "İngilizce": 10, "Matematik": 20, "Fen Bilimleri": 20 };
 const TOPLAM_SORU = Object.values(DERS_SORU).reduce((a, b) => a + b, 0);
@@ -297,6 +353,64 @@ function sesKomutunuAyristir(metin, students, kocluklOgrenciler) {
   }
 
   return { hedef, ogrenciId: enIyi ? enIyi.id : "", ders, durum, metin: duz };
+}
+// sesKomutunuAyristir içindeki öğrenci tespiti (3/2/1 kelimelik pencereler + adBenzerMi) ile birebir
+// aynı mantığı, Anasayfa'daki "Hızlı Git" arama kutusu için farklı bir öğrenci havuzu üzerinde tekrar
+// kullanabilmek amacıyla ayrı bir fonksiyona çıkarıldı. Önce METİNDEKİ SAYILAR öğrenci okul
+// numarasıyla (no) birebir denenir (hem yazınca hem de mikrofonla söyleyince çalışır — ses tanıma
+// motoru rakamları genelde doğrudan sayı olarak yazıya döker); numara eşleşmezse isim eşleştirmesine
+// geçilir.
+function metindeOgrenciBul(metin, havuz) {
+  const kelimeler = (metin || "").trim().split(/\s+/).filter(Boolean);
+  for (const k of kelimeler) {
+    const sayi = k.replace(/[^\d]/g, "");
+    if (!sayi || sayi === "0") continue;
+    const eslesen = (havuz || []).find((o) => o.no && String(o.no).trim() === sayi);
+    if (eslesen) return eslesen;
+  }
+  let enIyi = null;
+  for (let uzunluk = Math.min(3, kelimeler.length); uzunluk >= 1 && !enIyi; uzunluk--) {
+    for (let i = 0; i + uzunluk <= kelimeler.length; i++) {
+      const aday = adNormallestir(kelimeler.slice(i, i + uzunluk).join(" "));
+      if (!aday) continue;
+      const eslesen = (havuz || []).find((o) => adNormallestir(o.ad) === aday) ||
+        (uzunluk >= 2 ? (havuz || []).find((o) => adBenzerMi(adNormallestir(o.ad), aday)) : null);
+      if (eslesen) { enIyi = eslesen; break; }
+    }
+  }
+  return enIyi;
+}
+// Anasayfa'daki "Hızlı Git" arama kutusuna yazılan/söylenen serbest metindeki HANGİ sekmeye
+// gidileceğini belirleyen anahtar kelime kalıpları. Sıra önemli değildir; en az bir kalıp eşleşen
+// ilk hedef kullanılır. "not" kalıbı çok genel olduğu (bir öğrenci adının içinde geçebilir) için
+// kelime sınırıyla (\b) aranır.
+const HIZLI_GIT_HEDEFLERI = [
+  { tab: "karne", etiket: "Karne", re: /karne/ },
+  { tab: "iletisim", etiket: "İletişim", re: /(veli|ileti[sş]im|telefon|whatsapp)/ },
+  { tab: "davranislar", etiket: "Davranış Notu", re: /davran/ },
+  { tab: "kocluk", etiket: "Koçluk", re: /ko[cç]luk/ },
+  { tab: "yoklama", etiket: "Yoklama", re: /(yoklama|devams[iı]zl[iı]k)/ },
+  { tab: "notlar", etiket: "Not Defteri", re: /(\bnotu?\b|s[iı]nav|sözlü|sozlu)/ },
+];
+// "Ahmet Demir koçluk" ya da "Ahmet Demir davranış notu" gibi serbest bir metni { hedef sekme,
+// eşleşen öğrenci } ikilisine ayrıştırır. Önce hangi sekmeye gidileceğini belirleyen kalıp bulunur,
+// metinden çıkarılır; kalan kelimeler arasında (doğru öğrenci havuzunda — Koçluk için kocluklOgrenciler,
+// diğerleri için ana öğrenci listesi) öğrenci adı aranır. Böylece kelime sırası önemli olmaz: hem
+// "Ahmet Demir koçluk" hem "koçluk Ahmet Demir" çalışır.
+function hizliKomutCozumle(metin, students, kocluklOgrenciler) {
+  const duz = (metin || "").trim();
+  if (!duz) return null;
+  const kucuk = duz.toLocaleLowerCase("tr-TR");
+  const hedef = HIZLI_GIT_HEDEFLERI.find((h) => h.re.test(kucuk));
+  if (!hedef) return { hedef: null, hedefEtiket: null, ogrenci: null, kalanMetin: duz };
+  const temizMetin = duz
+    .replace(new RegExp(hedef.re.source, "gi"), " ")
+    .replace(/\b(sayfas[iı]n[iı]|sayfas[iı]|sayfaya|sayfas[iı]na|ekran[iı]n[iı]|ekran[iı]|git|a[cç]|a[cç]s[iı]n|göster|defteri|gir)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const havuz = hedef.tab === "kocluk" ? kocluklOgrenciler : students;
+  const ogrenci = metindeOgrenciBul(temizMetin, havuz || []);
+  return { hedef: hedef.tab, hedefEtiket: hedef.etiket, ogrenci, kalanMetin: temizMetin };
 }
 // Bir deneme kaydı (denemeler dizisindeki eleman), verilen sınıf seviyesi için hangi dersleri
 // ve her dersten kaç soru sorulduğunu döndürür. Deneme bu seviye için "Ders Ayarları" ekranından
@@ -4039,6 +4153,18 @@ function ProgramSahibiPaneli({ cikisYap }) {
 function StudentTracker() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("genel");
+  // "Hızlı Git" araması (bkz. SesleKayitPaneli): bir hedef sekme + o sekmede otomatik açılacak öğrenci
+  // bilgisini taşır. "zaman" alanı, aynı öğrenci art arda iki kez seçilse bile ilgili sekmenin bunu
+  // ayrı bir tetikleme olarak algılayabilmesi için eklenen bir sayaçtır (bkz. hedef bileşenlerdeki
+  // useEffect'ler). Hedef bileşen bunu işleyip hizliGitTuketildi() ile sıfırlar, aksi halde sekmeler
+  // arası geçişte gereksiz yere tekrar tetiklenir.
+  const [hizliGit, setHizliGit] = useState(null);
+  const hizliGitBaslat = (bilgi) => {
+    if (!bilgi || !bilgi.tab) return;
+    setTab(bilgi.tab);
+    setHizliGit({ ...bilgi, zaman: Date.now() });
+  };
+  const hizliGitTuketildi = () => setHizliGit(null);
   const [menuAcik, setMenuAcik] = useState(false);
   const [students, setStudents] = useState([]);
   // SINIFLAR: okulun kendi şube listesi (örn. "5-A"). Kayıtlı değilse eski sabit listeyle
@@ -4066,6 +4192,14 @@ function StudentTracker() {
   // KoclukNotTakip) — Davranışlar sekmesindeki günlük limitli notlardan kasıtlı olarak ayrı bir
   // depodur, çünkü bu notlar Koçluk'un kendi öğrenci listesine (kocluklOgrenciler) bağlıdır.
   const [koclukNotlari, setKoclukNotlari] = useState({});
+  // Ders İçi: tüm kayıtlı öğrencilere (kocluklOgrenciler gibi ayrı bir alt liste değil, doğrudan
+  // students) uygulanan ödev takip / kitap kontrolü / derse katılım artı-eksi kayıtları. Her biri
+  // { [tarihISO]: { [ders]: { [ogrenciId]: {durum, ekleyen, zaman} } } } şeklinde tutulur; böylece
+  // aynı gün birden fazla öğretmen, kendi seçtiği ders için ayrı ayrı kayıt girebilir.
+  const [dersIciDersler, setDersIciDersler] = useState(DERS_ICI_VARSAYILAN_DERSLER);
+  const [dersIciOdev, setDersIciOdev] = useState({});
+  const [dersIciKitap, setDersIciKitap] = useState({});
+  const [dersIciKatilim, setDersIciKatilim] = useState({});
   const [ogretmenSifreleri, setOgretmenSifreleri] = useState([]);
   const [veliSifreOnek, setVeliSifreOnek] = useState(""); // bu Ana Kullanıcının velilere verdiği şifrelerin başındaki ön ek
   const [dersProgrami, setDersProgrami] = useState(dpVarsayilanVeri());
@@ -4191,6 +4325,10 @@ function StudentTracker() {
             kocluklSiniflar: [],
             kocluklOgrenciler: [],
             koclukNotlari: {},
+            dersIciDersler: DERS_ICI_VARSAYILAN_DERSLER,
+            dersIciOdev: {},
+            dersIciKitap: {},
+            dersIciKatilim: {},
             ogretmenSifreleri: [],
             sinifTemizligi: {},
             siniflar: SINIFLAR,
@@ -4224,6 +4362,10 @@ function StudentTracker() {
           setKocluklSiniflar(bosVeri.kocluklSiniflar);
           setKocluklOgrenciler(bosVeri.kocluklOgrenciler);
           setKoclukNotlari(bosVeri.koclukNotlari);
+          setDersIciDersler(bosVeri.dersIciDersler);
+          setDersIciOdev(bosVeri.dersIciOdev);
+          setDersIciKitap(bosVeri.dersIciKitap);
+          setDersIciKatilim(bosVeri.dersIciKatilim);
           setOgretmenSifreleri(bosVeri.ogretmenSifreleri);
           setSinifTemizligi(bosVeri.sinifTemizligi);
           setSiniflarState(bosVeri.siniflar);
@@ -4266,6 +4408,10 @@ function StudentTracker() {
       setKocluklSiniflar(data.kocluklSiniflar || []);
       setKocluklOgrenciler(data.kocluklOgrenciler || []);
       setKoclukNotlari(data.koclukNotlari || {});
+      setDersIciDersler(Array.isArray(data.dersIciDersler) && data.dersIciDersler.length > 0 ? data.dersIciDersler : DERS_ICI_VARSAYILAN_DERSLER);
+      setDersIciOdev(data.dersIciOdev || {});
+      setDersIciKitap(data.dersIciKitap || {});
+      setDersIciKatilim(data.dersIciKatilim || {});
       setOgretmenSifreleri(data.ogretmenSifreleri || []);
       setVeliSifreOnek(data.veliSifreOnek || veliOnekVarsayilaniHesapla(anaId));
       setDersProgrami(data.dersProgrami ? dpGuvenliVeri(data.dersProgrami) : dpVarsayilanVeri());
@@ -4318,6 +4464,10 @@ function StudentTracker() {
   const updateKocluklSiniflar = useCallback((next) => { setKocluklSiniflar(next); saveKey("kocluklSiniflar", next); }, []);
   const updateKocluklOgrenciler = useCallback((next) => { setKocluklOgrenciler(next); saveKey("kocluklOgrenciler", next); }, []);
   const updateKoclukNotlari = useCallback((next) => { setKoclukNotlari(next); saveKey("koclukNotlari", next); }, []);
+  const updateDersIciDersler = useCallback((next) => { setDersIciDersler(next); saveKey("dersIciDersler", next); }, []);
+  const updateDersIciOdev = useCallback((next) => { setDersIciOdev(next); saveKey("dersIciOdev", next); }, []);
+  const updateDersIciKitap = useCallback((next) => { setDersIciKitap(next); saveKey("dersIciKitap", next); }, []);
+  const updateDersIciKatilim = useCallback((next) => { setDersIciKatilim(next); saveKey("dersIciKatilim", next); }, []);
   const updateOgretmenSifreleri = useCallback((next) => {
     setOgretmenSifreleri(next);
     saveKey("ogretmenSifreleri", next);
@@ -4375,8 +4525,13 @@ function StudentTracker() {
 
   const tabs = [
     { id: "genel", label: "Anasayfa", icon: IconDashboard, color: BLUE },
+    { id: "sesleKayit", label: "Mikrofonla Hızlı Git", icon: IconMic, color: "#00897B" },
+    { id: "hizliGit", label: "Hızlı Git", icon: IconSearch, color: "#00897B" },
     { id: "ogrenciler", label: "Öğrenciler", icon: IconUsers, color: GREEN },
     { id: "davranislar", label: "Davranışlar", icon: IconNote, color: "#F59E0B" },
+    { id: "kocluk", label: "Koçluk", icon: IconTarget, color: "#00897B" },
+    { id: "dersIci", label: "Ders İçi", icon: IconGrad, color: "#0EA5E9" },
+    { id: "karne", label: "Karne", icon: IconID, color: PURPLE },
     { id: "denemeler", label: "Denemeler", icon: IconChart, color: ORANGE },
     { id: "sinifTemizligi", label: "Sınıf Temizliği", icon: IconSparkles, color: "#14B8A6" },
     { id: "iletisim", label: "İletişim Bilgileri", icon: IconPhone, color: "#25D366" },
@@ -4408,6 +4563,7 @@ function StudentTracker() {
     return <VeliUygulama veliNo={veliNo} students={students} grades={grades} dersYoklama={dersYoklama} attendance={attendance}
       denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
       soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari}
+      dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim}
       davranisNotlari={davranisNotlari}
       baglanti={baglanti} cikisYap={cikisYap} />;
   }
@@ -4450,20 +4606,20 @@ function StudentTracker() {
         </aside>
 
         <main className="flex-1 min-w-0 px-4 sm:px-8 py-6 sm:py-8 max-w-4xl">
-          {tab === "genel" && <Genel students={students} dersYoklama={dersYoklama} grades={grades} setTab={setTab} otoAyar={otoAyar} updateOtoAyar={updateOtoAyar} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} rol={rol} kullaniciAdi={kullaniciAdi}
-            kocluklOgrenciler={kocluklOgrenciler} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari}
-            kocDevam={kocDevam} updateKocDevam={updateKocDevam} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum}
-            kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} koclukNotlari={koclukNotlari} updateKoclukNotlari={updateKoclukNotlari} />}
+          {tab === "genel" && <Genel students={students} dersYoklama={dersYoklama} grades={grades} setTab={setTab} otoAyar={otoAyar} updateOtoAyar={updateOtoAyar} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} rol={rol} kullaniciAdi={kullaniciAdi} />}
+          {tab === "hizliGit" && <HizliGitSayfa students={students} kocluklOgrenciler={kocluklOgrenciler} hizliGitBaslat={hizliGitBaslat} />}
+          {tab === "sesleKayit" && <MikrofonlaHizliGit students={students} kocluklOgrenciler={kocluklOgrenciler} hizliGitBaslat={hizliGitBaslat} />}
           {tab === "ogrenciler" && <Ogrenciler students={students} updateStudents={updateStudents} grades={grades} updateGrades={updateGrades} attendance={attendance} updateAttendance={updateAttendance} attendanceMeta={attendanceMeta} updateAttendanceMeta={updateAttendanceMeta} dersYoklama={dersYoklama} updateDersYoklama={updateDersYoklama} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} updateSiniflar={updateSiniflar} />}
-          {tab === "davranislar" && (plan === "premium" ? <Davranislar students={students} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari} kullaniciAdi={kullaniciAdi} rol={rol} /> : <PremiumKilit baslik="Davranışlar" telegramKullaniciAdi={telegramKullaniciAdi} />)}
-          {tab === "yoklama" && <Yoklama students={students} dersYoklama={dersYoklama} updateDersYoklama={updateDersYoklama} otoAyar={otoAyar} updateOtoAyar={updateOtoAyar} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} />}
-          {tab === "notlar" && <Notlar students={students} grades={grades} updateGrades={updateGrades} />}
-          {tab === "kocluk" && <Kocluk kocluklSiniflar={kocluklSiniflar} updateKocluklSiniflar={updateKocluklSiniflar} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} students={students} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum} kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} kocDevam={kocDevam} updateKocDevam={updateKocDevam} koclukNotlari={koclukNotlari} updateKoclukNotlari={updateKoclukNotlari} plan={plan} kullaniciAdi={kullaniciAdi} />}
+          {tab === "davranislar" && (plan === "premium" ? <Davranislar students={students} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari} kullaniciAdi={kullaniciAdi} rol={rol} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} /> : <PremiumKilit baslik="Davranışlar" telegramKullaniciAdi={telegramKullaniciAdi} />)}
+          {tab === "yoklama" && <Yoklama students={students} dersYoklama={dersYoklama} updateDersYoklama={updateDersYoklama} otoAyar={otoAyar} updateOtoAyar={updateOtoAyar} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
+          {tab === "notlar" && <Notlar students={students} grades={grades} updateGrades={updateGrades} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
+          {tab === "kocluk" && <Kocluk kocluklSiniflar={kocluklSiniflar} updateKocluklSiniflar={updateKocluklSiniflar} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} students={students} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum} kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} kocDevam={kocDevam} updateKocDevam={updateKocDevam} koclukNotlari={koclukNotlari} updateKoclukNotlari={updateKoclukNotlari} plan={plan} kullaniciAdi={kullaniciAdi} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
+          {tab === "dersIci" && <DersIci students={students} siniflar={siniflar} dersIciDersler={dersIciDersler} updateDersIciDersler={updateDersIciDersler} dersIciOdev={dersIciOdev} updateDersIciOdev={updateDersIciOdev} dersIciKitap={dersIciKitap} updateDersIciKitap={updateDersIciKitap} dersIciKatilim={dersIciKatilim} updateDersIciKatilim={updateDersIciKatilim} kullaniciAdi={kullaniciAdi} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "denemeler" && <Denemeler students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} />}
           {tab === "optik" && (plan === "premium" ? <OptikOkuyucuSayfa students={students} updateStudents={updateStudents} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} siniflar={siniflar} /> : <PremiumKilit baslik="Optik Okuyucu" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "sinifTemizligi" && (plan === "premium" ? <SinifTemizligi sinifTemizligi={sinifTemizligi} updateSinifTemizligi={updateSinifTemizligi} /> : <PremiumKilit baslik="Sınıf Temizliği" telegramKullaniciAdi={telegramKullaniciAdi} />)}
-          {tab === "karne" && <Karne students={students} grades={grades} attendance={attendance} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} setTab={setTab} />}
-          {tab === "iletisim" && <Iletisim students={students} updateStudents={updateStudents} veliSifreOnek={veliSifreOnek} />}
+          {tab === "karne" && <Karne students={students} grades={grades} attendance={attendance} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} setTab={setTab} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
+          {tab === "iletisim" && <Iletisim students={students} updateStudents={updateStudents} veliSifreOnek={veliSifreOnek} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "dersProgrami" && rol === "admin" && (plan === "premium" ? <DersProgrami dersProgrami={dersProgrami} updateDersProgrami={updateDersProgrami} /> : <PremiumKilit baslik="Ders Programı Oluşturucu" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "yonetim" && rol === "admin" && <YonetimPaneli ogretmenSifreleri={ogretmenSifreleri} updateOgretmenSifreleri={updateOgretmenSifreleri} veliSifreOnek={veliSifreOnek} updateVeliSifreOnek={updateVeliSifreOnek} plan={plan} />}
         </main>
@@ -4953,12 +5109,33 @@ const HEDEF_ETIKET = { davranis: "Davranış Notu", devam: "Koçluk — Devam Du
 // Speech API) canlı olarak metne çevrilir, sesKomutunuAyristir ile bir taslak çıkarılır ve öğretmene
 // TÜM alanları (hedef bölüm, öğrenci, ders, artı/eksi, not metni) düzenleyebileceği bir onay ekranı
 // gösterilir. Hiçbir veri, öğretmen "Kaydet"e basmadan gerçek kayıtlara yazılmaz.
-function SesleKayitPaneli({ students, kocluklOgrenciler, davranisNotlari, updateDavranisNotlari, kocDevam, updateKocDevam, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, koclukNotlari, updateKoclukNotlari, kullaniciAdi, rol }) {
+function SesleKayitPaneli({ students, kocluklOgrenciler, davranisNotlari, updateDavranisNotlari, kocDevam, updateKocDevam, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, koclukNotlari, updateKoclukNotlari, kullaniciAdi, rol, hizliGitBaslat }) {
   const Recognition = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
   const [dinliyor, setDinliyor] = useState(false);
   const [canliMetin, setCanliMetin] = useState("");
   const [taslak, setTaslak] = useState(null);
   const [mesaj, setMesaj] = useState(null); // { tip: "ok" | "hata", metin }
+
+  // "Hızlı Git" arama kutusu: "Ahmet Demir koçluk" ya da "Ahmet Demir davranış notu" gibi bir metin
+  // yazılınca doğrudan o öğrencinin ilgili sayfasını açar (bkz. hizliKomutCozumle). Sesle Kayıt'tan
+  // AYRI bir özelliktir — burada hiçbir şey kaydedilmez, sadece sayfa arasında hızlı geçiş yapılır.
+  const [hgAcik, setHgAcik] = useState(false);
+  const [hgMetin, setHgMetin] = useState("");
+  const [hgMesaj, setHgMesaj] = useState("");
+  const hgCalistir = () => {
+    const sonuc = hizliKomutCozumle(hgMetin, students, kocluklOgrenciler);
+    if (!sonuc || !sonuc.hedef) {
+      setHgMesaj("Hangi sayfaya gitmek istediğinizi anlayamadım. Örnek: \"Ahmet Demir koçluk\" ya da \"Ahmet Demir davranış notu\".");
+      return;
+    }
+    if (!sonuc.ogrenci) {
+      setHgMesaj(`${sonuc.hedefEtiket} sayfasına gidiliyor, ancak isimle eşleşen bir öğrenci bulunamadı — sayfada elle seçebilirsiniz.`);
+      hizliGitBaslat && hizliGitBaslat({ tab: sonuc.hedef });
+      return;
+    }
+    hizliGitBaslat && hizliGitBaslat({ tab: sonuc.hedef, ogrenciId: sonuc.ogrenci.id });
+    setHgMetin(""); setHgMesaj(""); setHgAcik(false);
+  };
   const recognitionRef = useRef(null);
   const havuzRef = useRef({ students, kocluklOgrenciler });
   useEffect(() => { havuzRef.current = { students, kocluklOgrenciler }; }, [students, kocluklOgrenciler]);
@@ -5046,8 +5223,32 @@ function SesleKayitPaneli({ students, kocluklOgrenciler, davranisNotlari, update
   if (!Recognition) {
     return (
       <Kart className="p-4 mb-6">
-        <h2 className="font-display text-base font-medium mb-1 flex items-center gap-2"><IconMic size={17} color={SUBTLE} />Sesle Kayıt</h2>
-        <p className="text-xs" style={{ color: SUBTLE }}>Bu tarayıcı sesli girişi desteklemiyor. Chrome (Android/masaüstü) kullanmayı deneyin.</p>
+        <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+          <h2 className="font-display text-base font-medium flex items-center gap-2"><IconMic size={17} color={SUBTLE} />Sesle Kayıt</h2>
+          <button onClick={() => { setHgAcik((v) => !v); setHgMesaj(""); }} title="Hızlı Git: bir öğrenci adı ve gitmek istediğiniz sayfayı yazın (ör. Ahmet Demir koçluk)"
+            className="flex items-center justify-center w-9 h-9 rounded-full shrink-0"
+            style={{ background: hgAcik ? "#00897B" : "#00897B14", border: `1px solid ${hgAcik ? "#00897B" : "#00897B33"}` }}>
+            <IconSearch size={15} color={hgAcik ? "#fff" : "#00897B"} />
+          </button>
+        </div>
+        <p className="text-xs mb-3" style={{ color: SUBTLE }}>Bu tarayıcı sesli girişi desteklemiyor. Chrome (Android/masaüstü) kullanmayı deneyin.</p>
+        {hgAcik && (
+          <div className="rounded-xl p-3 flex flex-col gap-2" style={{ background: "#00897B0D", border: "1px solid #00897B33" }}>
+            <p className="text-xs font-medium" style={{ color: "#00897B" }}>Hızlı Git — bir öğrenci adı ve gitmek istediğiniz sayfayı yazın</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <GoogleInput autoFocus value={hgMetin} onChange={(e) => { setHgMetin(e.target.value); setHgMesaj(""); }}
+                onKeyDown={(e) => e.key === "Enter" && hgCalistir()}
+                placeholder='Örn. "Ahmet Demir koçluk" ya da "Ahmet Demir davranış notu"' className="flex-1 min-w-[200px]" />
+              <button onClick={hgCalistir} disabled={!hgMetin.trim()}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs sm:text-sm font-semibold shrink-0 text-white disabled:opacity-40"
+                style={{ background: "#00897B" }}>
+                <IconSearch size={14} color="#fff" />Git
+              </button>
+            </div>
+            <p className="text-[11px]" style={{ color: SUBTLE }}>Gidilebilecek sayfalar: Koçluk, Davranış Notu, Not Defteri, Yoklama, Karne, İletişim.</p>
+            {hgMesaj && <p className="text-xs font-medium" style={{ color: RED }}>{hgMesaj}</p>}
+          </div>
+        )}
       </Kart>
     );
   }
@@ -5059,13 +5260,38 @@ function SesleKayitPaneli({ students, kocluklOgrenciler, davranisNotlari, update
     <Kart className="p-4 mb-6">
       <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
         <h2 className="font-display text-base font-medium flex items-center gap-2"><IconMic size={17} color="#00897B" />Sesle Kayıt</h2>
-        <button onClick={dinliyor ? kayitDurdur : kayitBaslat}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs sm:text-sm font-semibold shrink-0 text-white"
-          style={{ background: dinliyor ? RED : "#00897B" }}>
-          <IconMic size={14} color="#fff" />{dinliyor ? "Dinlemeyi Durdur" : "Konuşarak Kayıt Ekle"}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={() => { setHgAcik((v) => !v); setHgMesaj(""); }} title="Hızlı Git: bir öğrenci adı ve gitmek istediğiniz sayfayı yazın (ör. Ahmet Demir koçluk)"
+            className="flex items-center justify-center w-9 h-9 rounded-full shrink-0"
+            style={{ background: hgAcik ? "#00897B" : "#00897B14", border: `1px solid ${hgAcik ? "#00897B" : "#00897B33"}` }}>
+            <IconSearch size={15} color={hgAcik ? "#fff" : "#00897B"} />
+          </button>
+          <button onClick={dinliyor ? kayitDurdur : kayitBaslat}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs sm:text-sm font-semibold shrink-0 text-white"
+            style={{ background: dinliyor ? RED : "#00897B" }}>
+            <IconMic size={14} color="#fff" />{dinliyor ? "Dinlemeyi Durdur" : "Konuşarak Kayıt Ekle"}
+          </button>
+        </div>
       </div>
       <p className="text-xs mb-3" style={{ color: SUBTLE }}>Örnek: "Ahmet Demir matematik soru çözümü gerçekleştirdi, koçluğa gir" ya da "Zeynep teneffüste arkadaşıyla kavga etti". Söylediğiniz hiçbir şey, aşağıda görüp onaylamadan kaydedilmez.</p>
+
+      {hgAcik && (
+        <div className="rounded-xl p-3 mb-3 flex flex-col gap-2" style={{ background: "#00897B0D", border: "1px solid #00897B33" }}>
+          <p className="text-xs font-medium" style={{ color: "#00897B" }}>Hızlı Git — bir öğrenci adı ve gitmek istediğiniz sayfayı yazın</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <GoogleInput autoFocus value={hgMetin} onChange={(e) => { setHgMetin(e.target.value); setHgMesaj(""); }}
+              onKeyDown={(e) => e.key === "Enter" && hgCalistir()}
+              placeholder='Örn. "Ahmet Demir koçluk" ya da "Ahmet Demir davranış notu"' className="flex-1 min-w-[200px]" />
+            <button onClick={hgCalistir} disabled={!hgMetin.trim()}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs sm:text-sm font-semibold shrink-0 text-white disabled:opacity-40"
+              style={{ background: "#00897B" }}>
+              <IconSearch size={14} color="#fff" />Git
+            </button>
+          </div>
+          <p className="text-[11px]" style={{ color: SUBTLE }}>Gidilebilecek sayfalar: Koçluk, Davranış Notu, Not Defteri, Yoklama, Karne, İletişim.</p>
+          {hgMesaj && <p className="text-xs font-medium" style={{ color: RED }}>{hgMesaj}</p>}
+        </div>
+      )}
 
       {dinliyor && (
         <div className="rounded-xl px-3.5 py-2.5 text-sm mb-3 flex items-center gap-2" style={{ background: "#00897B14", color: "#00897B" }}>
@@ -5130,7 +5356,142 @@ function SesleKayitPaneli({ students, kocluklOgrenciler, davranisNotlari, update
   );
 }
 
-function Genel({ students, dersYoklama, grades, setTab, otoAyar, updateOtoAyar, otoGecmis, updateOtoGecmis, rol, kullaniciAdi, kocluklOgrenciler, davranisNotlari, updateDavranisNotlari, kocDevam, updateKocDevam, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, koclukNotlari, updateKoclukNotlari }) {
+// Sol menüdeki "Hızlı Git" VE "Konuşarak Kayıt Ekle" sekmeleri artık ikisi de bu sayfayı açar
+// (bkz. App içindeki `(tab === "hizliGit" || tab === "sesleKayit")` render bloğu): bir öğrenci adı
+// ve gitmek istenen sayfa yazılınca hizliKomutCozumle ile ayrıştırılıp hizliGitBaslat üzerinden
+// ilgili sekmeye, o öğrenci seçili şekilde gidilir.
+function HizliGitSayfa({ students, kocluklOgrenciler, hizliGitBaslat }) {
+  const [metin, setMetin] = useState("");
+  const [mesaj, setMesaj] = useState("");
+  const calistir = () => {
+    const sonuc = hizliKomutCozumle(metin, students, kocluklOgrenciler);
+    if (!sonuc || !sonuc.hedef) {
+      setMesaj('Hangi sayfaya gitmek istediğinizi anlayamadım. Örnek: "Ahmet Demir koçluk" ya da "Ahmet Demir davranış notu".');
+      return;
+    }
+    if (!sonuc.ogrenci) {
+      setMesaj(`${sonuc.hedefEtiket} sayfasına gidiliyor, ancak isimle eşleşen bir öğrenci bulunamadı — sayfada elle seçebilirsiniz.`);
+      hizliGitBaslat && hizliGitBaslat({ tab: sonuc.hedef });
+      return;
+    }
+    hizliGitBaslat && hizliGitBaslat({ tab: sonuc.hedef, ogrenciId: sonuc.ogrenci.id });
+    setMetin("");
+    setMesaj("");
+  };
+  return (
+    <div>
+      <Baslik title="Hızlı Git" desc='Bir öğrenci adı ve gitmek istediğiniz sayfayı yazın, ilgili öğrenci seçili olarak o sayfaya gidersiniz.' />
+      <Kart className="p-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          <GoogleInput autoFocus value={metin} onChange={(e) => { setMetin(e.target.value); setMesaj(""); }}
+            onKeyDown={(e) => e.key === "Enter" && calistir()}
+            placeholder='Örn. "Ahmet Demir koçluk" ya da "Ahmet Demir davranış notu"' className="flex-1 min-w-[200px]" />
+          <button onClick={calistir} disabled={!metin.trim()}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs sm:text-sm font-semibold shrink-0 text-white disabled:opacity-40"
+            style={{ background: "#00897B" }}>
+            <IconSearch size={14} color="#fff" />Git
+          </button>
+        </div>
+        <p className="text-[11px] mt-2" style={{ color: SUBTLE }}>Gidilebilecek sayfalar: Koçluk, Davranış Notu, Not Defteri, Yoklama, Karne, İletişim.</p>
+        {mesaj && <p className="text-xs mt-2 font-medium" style={{ color: RED }}>{mesaj}</p>}
+      </Kart>
+    </div>
+  );
+}
+
+// Sol menüdeki "Mikrofonla Hızlı Git" sekmesi: mikrofona basılıp bir öğrenci adı/numarası ve gitmek
+// istenen sayfa söylenince, isim/numara ve sayfa anlaşılır anlaşılmaz (kullanıcı hiçbir şeye
+// tıklamadan) doğrudan ilgili sayfaya, öğrenci seçili şekilde gidilir. `continuous = true`
+// kullanılması bilinçli bir tercih: normal (continuous=false) modda tarayıcı kısa bir sessizlikte
+// (ör. bir kelime söyleyip biraz düşünme payı bırakınca) dinlemeyi hemen kesiyordu; continuous
+// modda kullanıcı durdurana ya da bir eşleşme bulununcaya kadar dinlemeye devam eder.
+function MikrofonlaHizliGit({ students, kocluklOgrenciler, hizliGitBaslat }) {
+  const Recognition = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+  const [dinliyor, setDinliyor] = useState(false);
+  const [canliMetin, setCanliMetin] = useState("");
+  const [mesaj, setMesaj] = useState(null); // { tip: "hata", metin }
+  const recognitionRef = useRef(null);
+  const havuzRef = useRef({ students, kocluklOgrenciler });
+  useEffect(() => { havuzRef.current = { students, kocluklOgrenciler }; }, [students, kocluklOgrenciler]);
+
+  useEffect(() => {
+    if (!Recognition) return;
+    const r = new Recognition();
+    r.lang = "tr-TR";
+    r.continuous = true;
+    r.interimResults = true;
+    r.maxAlternatives = 1;
+    r.onresult = (e) => {
+      let birlesikMetin = "";
+      for (let i = 0; i < e.results.length; i++) birlesikMetin += e.results[i][0].transcript;
+      setCanliMetin(birlesikMetin);
+      if (e.results[e.results.length - 1].isFinal) {
+        const { students: s, kocluklOgrenciler: k } = havuzRef.current;
+        const sonuc = hizliKomutCozumle(birlesikMetin, s, k);
+        if (sonuc && sonuc.hedef) {
+          try { r.stop(); } catch (err) {}
+          if (sonuc.ogrenci) {
+            hizliGitBaslat && hizliGitBaslat({ tab: sonuc.hedef, ogrenciId: sonuc.ogrenci.id });
+          } else {
+            setMesaj({ tip: "hata", metin: `${sonuc.hedefEtiket} sayfasına gidiliyor, ancak isimle/numarayla eşleşen bir öğrenci bulunamadı — sayfada elle seçebilirsiniz.` });
+            hizliGitBaslat && hizliGitBaslat({ tab: sonuc.hedef });
+          }
+          setCanliMetin("");
+        }
+      }
+    };
+    r.onerror = (e) => {
+      setDinliyor(false);
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") setMesaj({ tip: "hata", metin: "Mikrofon izni verilmedi. Tarayıcı ayarlarından mikrofona izin verin." });
+      else if (e.error === "no-speech") setMesaj({ tip: "hata", metin: "Ses algılanamadı, lütfen tekrar deneyin." });
+      else setMesaj({ tip: "hata", metin: "Ses tanıma sırasında bir sorun oluştu, lütfen tekrar deneyin." });
+    };
+    r.onend = () => setDinliyor(false);
+    recognitionRef.current = r;
+    return () => { try { r.stop(); } catch (err) {} };
+  }, [Recognition]);
+
+  const dinlemeyeBasla = () => {
+    if (!recognitionRef.current) return;
+    setMesaj(null);
+    setCanliMetin("");
+    setDinliyor(true);
+    try { recognitionRef.current.start(); } catch (err) { setDinliyor(false); }
+  };
+  const dinlemeyiDurdur = () => { try { recognitionRef.current && recognitionRef.current.stop(); } catch (err) {} setDinliyor(false); };
+
+  if (!Recognition) {
+    return (
+      <div>
+        <Baslik title="Mikrofonla Hızlı Git" desc='Mikrofonla bir öğrenci adı/numarası ve gitmek istediğiniz sayfayı söyleyin.' />
+        <Kart className="p-4">
+          <p className="text-sm" style={{ color: SUBTLE }}>Bu tarayıcı sesli girişi desteklemiyor. Chrome (Android/masaüstü) kullanmayı deneyin.</p>
+        </Kart>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <Baslik title="Mikrofonla Hızlı Git" desc='Mikrofona basıp örn. "Ahmet Demir koçluk" ya da "247 davranış notu" deyin — anlaşılır anlaşılmaz ilgili sayfaya gidilir.' />
+      <Kart className="p-4">
+        <div className="flex items-center gap-3 flex-wrap mb-3">
+          <button onClick={dinliyor ? dinlemeyiDurdur : dinlemeyeBasla}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs sm:text-sm font-semibold shrink-0 text-white"
+            style={{ background: dinliyor ? RED : "#00897B" }}>
+            <IconMic size={14} color="#fff" />{dinliyor ? "Dinlemeyi Durdur" : "Mikrofonla Hızlı Git"}
+          </button>
+          {dinliyor && <span className="text-xs font-medium" style={{ color: "#00897B" }}>Dinleniyor…</span>}
+        </div>
+        {canliMetin && <p className="text-sm rounded-lg p-2.5 mb-2" style={{ background: BG }}>{canliMetin}</p>}
+        <p className="text-[11px]" style={{ color: SUBTLE }}>Gidilebilecek sayfalar: Koçluk, Davranış Notu, Not Defteri, Yoklama, Karne, İletişim. Öğrenci adını ya da okul numarasını söyleyebilirsiniz.</p>
+        {mesaj && <p className="text-xs mt-2 font-medium" style={{ color: RED }}>{mesaj.metin}</p>}
+      </Kart>
+    </div>
+  );
+}
+
+function Genel({ students, dersYoklama, grades, setTab, otoAyar, updateOtoAyar, otoGecmis, updateOtoGecmis, rol, kullaniciAdi }) {
   const today = useBugun();
   const bugunDersler = dersYoklama[today] || {};
   const stats = useMemo(() => {
@@ -5201,10 +5562,6 @@ function Genel({ students, dersYoklama, grades, setTab, otoAyar, updateOtoAyar, 
           </p>
         </div>
       )}
-      <SesleKayitPaneli students={students} kocluklOgrenciler={kocluklOgrenciler} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari}
-        kocDevam={kocDevam} updateKocDevam={updateKocDevam} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum}
-        kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} koclukNotlari={koclukNotlari} updateKoclukNotlari={updateKoclukNotlari}
-        kullaniciAdi={kullaniciAdi} rol={rol} />
       <Baslik title="Anasayfa" desc={fmtDateTR(today)} />
       {students.length === 0 ? (
         <Bos mesaj="Henüz öğrenci eklenmedi" ipucu='"Öğrenciler" sekmesinden ilk kaydı oluşturun.' />
@@ -6189,7 +6546,7 @@ const DAVRANIS_RENK = "#F59E0B";
 
 // Öğretmenin öğrenciyle ilgili yazdığı kısa (1-2 cümlelik) davranış notlarını yönetir.
 // Her öğrenci için aynı günde en fazla DAVRANIS_GUNLUK_LIMIT (3) not girilebilir.
-function Davranislar({ students, davranisNotlari, updateDavranisNotlari, kullaniciAdi, rol }) {
+function Davranislar({ students, davranisNotlari, updateDavranisNotlari, kullaniciAdi, rol, hizliGit, hizliGitTuketildi }) {
   const [arama, setArama] = useState("");
   const [aramaOdakli, setAramaOdakli] = useState(false);
   const [secili, setSecili] = useState(null);
@@ -6221,6 +6578,17 @@ function Davranislar({ students, davranisNotlari, updateDavranisNotlari, kullani
     setTarihSecili(VELI_DAVRANIS_TUM_ID);
     setOgrenciListesiAcik(false);
   };
+
+  // Anasayfa'daki "Hızlı Git" aramasından ("Ahmet Demir davranış notu" gibi) bu sekmeye
+  // yönlendirildiyse, eşleşen öğrenciyi otomatik seçili getirir. hizliGitTuketildi() ile hemen
+  // sıfırlanır; aksi halde öğretmen "Öğrenci Değiştir"e bassa bile aynı öğrenci tekrar seçilir.
+  useEffect(() => {
+    if (!hizliGit || hizliGit.tab !== "davranislar") return;
+    const s = students.find((x) => x.id === hizliGit.ogrenciId);
+    if (s) ogrenciSec(s);
+    hizliGitTuketildi && hizliGitTuketildi();
+    // eslint-disable-next-line
+  }, [hizliGit]);
 
   // Seçili tarihte davranış notu girilmiş öğrencilerin listesi (en son not girilen en üstte).
   const davranisliOgrenciler = useMemo(() => {
@@ -6395,9 +6763,19 @@ function Davranislar({ students, davranisNotlari, updateDavranisNotlari, kullani
   );
 }
 
-function Iletisim({ students, updateStudents, veliSifreOnek }) {
+function Iletisim({ students, updateStudents, veliSifreOnek, hizliGit, hizliGitTuketildi }) {
   const [sinifFiltre, setSinifFiltre] = useState("");
   const [arama, setArama] = useState("");
+
+  // Anasayfa'daki "Hızlı Git" aramasından ("Ahmet Demir iletişim/veli" gibi) bu sekmeye
+  // yönlendirildiyse, listeyi doğrudan o öğrencinin adına göre filtreler.
+  useEffect(() => {
+    if (!hizliGit || hizliGit.tab !== "iletisim") return;
+    const s = students.find((x) => x.id === hizliGit.ogrenciId);
+    if (s) { setArama(s.ad); setSinifFiltre(""); }
+    hizliGitTuketildi && hizliGitTuketildi();
+    // eslint-disable-next-line
+  }, [hizliGit]);
   const etkinOnek = (veliSifreOnek && String(veliSifreOnek).trim()) || VELI_SIFRE_ONEK;
   // Velilerin giriş/çıkış kayıtlarını canlı dinler; böylece şifresini verdiğiniz bir velinin şu an
   // aktif bir oturumu olup olmadığını görüp gerekirse çıkışa zorlayabilirsiniz.
@@ -6493,10 +6871,20 @@ function dersEtiket(dersNo) {
   return `${dersNo}. Ders (${dersNo < OGLEDEN_SONRA_ILK_DERS ? "Sabah" : "Öğleden Sonra"})`;
 }
 
-function Yoklama({ students, dersYoklama, updateDersYoklama, otoAyar, updateOtoAyar, otoGecmis, updateOtoGecmis }) {
+function Yoklama({ students, dersYoklama, updateDersYoklama, otoAyar, updateOtoAyar, otoGecmis, updateOtoGecmis, hizliGit, hizliGitTuketildi }) {
   const [tarih, setTarih] = useState(todayISO());
   const [sinifFiltre, setSinifFiltre] = useState(SINIFLAR[0]);
   const [ders, setDers] = useState(1);
+
+  // Anasayfa'daki "Hızlı Git" aramasından ("Ahmet Demir yoklama" gibi) bu sekmeye yönlendirildiyse,
+  // öğrencinin sınıfını filtre olarak açar (Yoklama tek tek değil sınıf bazlı işaretlenir).
+  useEffect(() => {
+    if (!hizliGit || hizliGit.tab !== "yoklama") return;
+    const s = students.find((x) => x.id === hizliGit.ogrenciId);
+    if (s && s.sinif) setSinifFiltre(s.sinif);
+    hizliGitTuketildi && hizliGitTuketildi();
+    // eslint-disable-next-line
+  }, [hizliGit]);
   const sinifOgrencileri = useMemo(() => students.filter((s) => s.sinif === sinifFiltre), [students, sinifFiltre]);
   const gunKaydi = dersYoklama[tarih] || {};
   const dersKaydi = gunKaydi[ders] || {};
@@ -7179,10 +7567,21 @@ function KoclukYonetim({ siniflar, updateSiniflar, ogrenciler, updateOgrenciler,
   );
 }
 
-function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, updateKocluklOgrenciler, students, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, kocDevam, updateKocDevam, koclukNotlari, updateKoclukNotlari, plan, kullaniciAdi }) {
+function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, updateKocluklOgrenciler, students, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, kocDevam, updateKocDevam, koclukNotlari, updateKoclukNotlari, plan, kullaniciAdi, hizliGit, hizliGitTuketildi }) {
   const [altSekme, setAltSekme] = useState("siniflar");
   const [tarih, setTarih] = useState(todayISO());
   const [sinifFiltre, setSinifFiltre] = useState(kocluklSiniflar[0] || "");
+
+  // Anasayfa'daki "Hızlı Git" aramasından ("Ahmet Demir koçluk" gibi) bu sekmeye yönlendirildiyse,
+  // öğrencinin koçluk sınıfını bulup "Not Al" alt sekmesini o sınıfla açar — Koçluk'ta tek bir
+  // öğrenci profili değil sınıf bazlı tablolar olduğundan, en yakın "profil" görünümü budur.
+  useEffect(() => {
+    if (!hizliGit || hizliGit.tab !== "kocluk") return;
+    const o = (kocluklOgrenciler || []).find((x) => x.id === hizliGit.ogrenciId);
+    if (o) { setAltSekme("not"); if (o.sinif) setSinifFiltre(o.sinif); }
+    hizliGitTuketildi && hizliGitTuketildi();
+    // eslint-disable-next-line
+  }, [hizliGit]);
   const altSekmeler = [
     { id: "siniflar", label: "Sınıf & Öğrenci", icon: IconUsers },
     { id: "devam", label: "Devam Durumu", icon: IconCalendar },
@@ -7235,7 +7634,220 @@ function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, upd
   );
 }
 
-function Notlar({ students, grades, updateGrades }) {
+// --- Ders İçi: Ders Yönetimi ---------------------------------------------------------------
+// "Ders İçi" sekmesindeki ödev takip / kitap kontrolü / derse katılım kayıtlarının hangi ders(ler)
+// için tutulacağını belirleyen liste. DERSLER sabitinden bağımsızdır — buradan eklenir, adı
+// düzeltilir (yeniden adlandırılır) ya da silinir. Bir ders yeniden adlandırıldığında, geçmiş
+// kayıtlardaki eski ders adı OLDUĞU GİBİ kalır (geçmiş veri kaybolmasın diye) — sadece bundan
+// sonraki girişlerde yeni ad seçilebilir hale gelir.
+function DersIciDersYonetim({ dersler, updateDersler }) {
+  const [yeniDers, setYeniDers] = useState("");
+  const [duzenlenen, setDuzenlenen] = useState(null); // düzenlenmekte olan dersin mevcut adı
+  const [duzenlenenYeniAd, setDuzenlenenYeniAd] = useState("");
+
+  const dersEkle = () => {
+    const temiz = yeniDers.trim();
+    if (!temiz) return;
+    if (dersler.some((d) => d.toLocaleLowerCase("tr") === temiz.toLocaleLowerCase("tr"))) { setYeniDers(""); return; }
+    updateDersler([...dersler, temiz]);
+    setYeniDers("");
+  };
+
+  const duzenlemeyeBasla = (ders) => { setDuzenlenen(ders); setDuzenlenenYeniAd(ders); };
+  const duzenlemeyiKaydet = () => {
+    const temiz = duzenlenenYeniAd.trim();
+    if (!temiz || temiz === duzenlenen) { setDuzenlenen(null); return; }
+    if (dersler.some((d) => d !== duzenlenen && d.toLocaleLowerCase("tr") === temiz.toLocaleLowerCase("tr"))) return;
+    updateDersler(dersler.map((d) => (d === duzenlenen ? temiz : d)));
+    setDuzenlenen(null);
+  };
+  const dersSil = (ders) => {
+    if (!window.confirm(`"${ders}" dersini silmek istediğinize emin misiniz? Bu dersin geçmiş artı/eksi kayıtları silinmez, sadece yeni giriş için seçilemez hale gelir.`)) return;
+    updateDersler(dersler.filter((d) => d !== ders));
+  };
+
+  return (
+    <div>
+      <Baslik title="Dersler" desc="Ödev takip, kitap kontrolü ve derse katılım için kullanılacak dersleri buradan ekleyin, düzeltin veya silin. Her öğretmen kayıt girerken kendi seçtiği dersle ilgili işaretleme yapar." />
+      <Kart className="p-4 mb-4 flex flex-wrap items-center gap-3">
+        <GoogleInput value={yeniDers} onChange={(e) => setYeniDers(e.target.value)} placeholder="Yeni ders adı (ör. Beden Eğitimi)"
+          className="flex-1 min-w-[200px]" onKeyDown={(e) => e.key === "Enter" && dersEkle()} />
+        <GoogleButton onClick={dersEkle} disabled={!yeniDers.trim()}><IconPlus size={16} color="#fff" />Ders Ekle</GoogleButton>
+      </Kart>
+      {dersler.length === 0 ? (
+        <Bos mesaj="Henüz ders eklenmedi" ipucu='Yukarıdan bir ders adı yazıp "Ders Ekle"ye basın.' />
+      ) : (
+        <Kart>
+          {dersler.map((ders) => (
+            <div key={ders} className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${BORDER}` }}>
+              {duzenlenen === ders ? (
+                <>
+                  <GoogleInput value={duzenlenenYeniAd} onChange={(e) => setDuzenlenenYeniAd(e.target.value)} className="flex-1"
+                    onKeyDown={(e) => e.key === "Enter" && duzenlemeyiKaydet()} autoFocus />
+                  <button onClick={duzenlemeyiKaydet} className="p-1.5 rounded-full hover:bg-gray-100 shrink-0" title="Kaydet"><IconCheck size={15} color={GREEN} /></button>
+                  <button onClick={() => setDuzenlenen(null)} className="p-1.5 rounded-full hover:bg-gray-100 shrink-0" title="Vazgeç"><IconX size={15} color={SUBTLE} /></button>
+                </>
+              ) : (
+                <>
+                  <span className="flex-1 text-sm font-medium truncate">{ders}</span>
+                  <button onClick={() => duzenlemeyeBasla(ders)} className="p-1.5 rounded-full hover:bg-gray-100 shrink-0" title="Yeniden adlandır"><IconEdit size={15} color={BLUE} /></button>
+                  <button onClick={() => dersSil(ders)} className="p-1.5 rounded-full hover:bg-gray-100 shrink-0" title="Sil"><IconTrash size={15} color={RED} /></button>
+                </>
+              )}
+            </div>
+          ))}
+        </Kart>
+      )}
+    </div>
+  );
+}
+
+// --- Ders İçi: Artı/Eksi Takibi (Ödev Takip / Kitap Kontrolü / Derse Katılım) --------------
+// ArtiEksiTakip'ten (Koçluk) farkı: (1) ayrı bir öğrenci alt listesi değil, doğrudan sistemdeki TÜM
+// kayıtlı öğrenciler kullanılır — sınıf gerçek SINIFLAR/siniflar listesinden seçilir; (2) kayıt
+// tarih+DERS+öğrenci bazında tutulur, böylece aynı gün farklı öğretmenler kendi seçtikleri ders için
+// ayrı ayrı işaretleme yapabilir; (3) hangi öğretmenin girdiği ("ekleyen") kayıtla birlikte saklanır.
+function DersIciTakip({ students, siniflar, dersler, kayitlar, updateKayitlar, baslik, aciklama, aktifRenk = "#0EA5E9", artiEtiket = "Artı", eksiEtiket = "Eksi", tarih, setTarih, sinifFiltre, setSinifFiltre, dersFiltre, setDersFiltre, kullaniciAdi }) {
+  useEffect(() => {
+    if ((!sinifFiltre || !siniflar.includes(sinifFiltre)) && siniflar.length) setSinifFiltre(siniflar[0]);
+  }, [siniflar]);
+  useEffect(() => {
+    if ((!dersFiltre || !dersler.includes(dersFiltre)) && dersler.length) setDersFiltre(dersler[0]);
+  }, [dersler]);
+  const sinifOgrencileri = useMemo(() => students.filter((s) => s.sinif === sinifFiltre).slice().sort((a, b) => a.ad.localeCompare(b.ad, "tr")), [students, sinifFiltre]);
+  const gunKaydi = kayitlar[tarih] || {};
+  const dersKaydi = gunKaydi[dersFiltre] || {};
+  const kayitAl = (studentId) => {
+    const d = dersKaydi[studentId];
+    return d && typeof d === "object" ? d.durum : d;
+  };
+  const isaretle = (studentId, durum) => {
+    const guncelDers = { ...dersKaydi };
+    const mevcut = kayitAl(studentId);
+    if (mevcut === durum) delete guncelDers[studentId];
+    else guncelDers[studentId] = { durum, ekleyen: kullaniciAdi || "Öğretmen", zaman: Date.now() };
+    updateKayitlar({ ...kayitlar, [tarih]: { ...gunKaydi, [dersFiltre]: guncelDers } });
+  };
+  const ozet = useMemo(() => {
+    let artiSayisi = 0, eksiSayisi = 0;
+    sinifOgrencileri.forEach((s) => { const d = kayitAl(s.id); if (d === "arti") artiSayisi++; else if (d === "eksi") eksiSayisi++; });
+    return { artiSayisi, eksiSayisi };
+  }, [dersKaydi, sinifOgrencileri]);
+
+  return (
+    <div>
+      <Baslik title={baslik} desc={aciklama} />
+      <Kart className="flex flex-wrap items-center gap-4 mb-6 p-4">
+        <SinifSecici value={sinifFiltre} onChange={setSinifFiltre} hepsi={false} siniflar={siniflar} className="sm:w-40" />
+        <GoogleSelect value={dersFiltre} onChange={(e) => setDersFiltre(e.target.value)} className="sm:w-56">
+          {!dersler.includes(dersFiltre) && dersFiltre && <option value={dersFiltre}>{dersFiltre}</option>}
+          {dersler.map((d) => <option key={d} value={d}>{d}</option>)}
+        </GoogleSelect>
+        <GoogleInput type="date" value={tarih} onChange={(e) => setTarih(e.target.value)} />
+        <div className="flex items-center gap-3 text-xs font-medium ml-auto">
+          <span className="flex items-center gap-1" style={{ color: aktifRenk }}><span className="w-2 h-2 rounded-full" style={{ background: aktifRenk }} />{ozet.artiSayisi} {artiEtiket.toLocaleLowerCase("tr")}</span>
+          <span className="flex items-center gap-1" style={{ color: RED }}><span className="w-2 h-2 rounded-full" style={{ background: RED }} />{ozet.eksiSayisi} {eksiEtiket.toLocaleLowerCase("tr")}</span>
+        </div>
+      </Kart>
+      {dersler.length === 0 ? (
+        <Bos mesaj="Henüz ders eklenmedi" ipucu='"Dersler" sekmesinden en az bir ders ekleyin.' />
+      ) : siniflar.length === 0 ? (
+        <Bos mesaj="Henüz sınıf tanımlı değil" ipucu='Önce "Öğrenciler" sekmesinden bir sınıf oluşturun.' />
+      ) : sinifOgrencileri.length === 0 ? (
+        <Bos mesaj="Bu sınıfta öğrenci yok" ipucu='Önce "Öğrenciler" sekmesinden öğrenci ekleyin.' />
+      ) : (
+        <Kart>
+          {sinifOgrencileri.map((s) => {
+            const durum = kayitAl(s.id);
+            const kayit = dersKaydi[s.id];
+            const ekleyen = kayit && typeof kayit === "object" ? kayit.ekleyen : "";
+            return (
+              <div key={s.id} className="flex items-center gap-4 px-4 py-2.5 ripple-row" style={{ borderBottom: `1px solid ${BORDER}` }}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{s.ad}</p>
+                  <p className="text-[11px]" style={{ color: SUBTLE }}>{s.sinif || "—"}{ekleyen ? ` · ${ekleyen}` : ""}</p>
+                </div>
+                <Chip active={durum === "arti"} color={aktifRenk} label={artiEtiket} onClick={() => isaretle(s.id, "arti")}><IconPlus size={16} strokeWidth={3} color={durum === "arti" ? "#fff" : SUBTLE} /></Chip>
+                <Chip active={durum === "eksi"} color={RED} label={eksiEtiket} onClick={() => isaretle(s.id, "eksi")}><IconMinus size={16} strokeWidth={3} color={durum === "eksi" ? "#fff" : SUBTLE} /></Chip>
+              </div>
+            );
+          })}
+        </Kart>
+      )}
+    </div>
+  );
+}
+
+// --- Ders İçi: Ana Sekme --------------------------------------------------------------------
+// Koçluk sekmesiyle aynı üst düzen mantığını kullanır (alt sekmeler arasında tarih/sınıf/ders
+// filtreleri korunur), ama öğrenci havuzu ayrı bir liste değil doğrudan sistemdeki TÜM öğrencilerdir.
+function DersIci({ students, siniflar, dersIciDersler, updateDersIciDersler, dersIciOdev, updateDersIciOdev, dersIciKitap, updateDersIciKitap, dersIciKatilim, updateDersIciKatilim, kullaniciAdi, hizliGit, hizliGitTuketildi }) {
+  const [altSekme, setAltSekme] = useState("odev");
+  const [tarih, setTarih] = useState(todayISO());
+  const [sinifFiltre, setSinifFiltre] = useState(siniflar[0] || "");
+  const [dersFiltre, setDersFiltre] = useState(dersIciDersler[0] || "");
+
+  // Anasayfa'daki "Hızlı Git" aramasından bu sekmeye yönlendirildiyse, öğrencinin sınıfını filtre
+  // olarak açar (Ders İçi de Yoklama gibi sınıf bazlı toplu işaretlenir, tek tek değil).
+  useEffect(() => {
+    if (!hizliGit || hizliGit.tab !== "dersIci") return;
+    const s = students.find((x) => x.id === hizliGit.ogrenciId);
+    if (s && s.sinif) setSinifFiltre(s.sinif);
+    hizliGitTuketildi && hizliGitTuketildi();
+    // eslint-disable-next-line
+  }, [hizliGit]);
+
+  const altSekmeler = [
+    { id: "dersler", label: "Dersler", icon: IconEdit },
+    { id: "odev", label: "Ödev Takip", icon: IconNote },
+    { id: "kitap", label: "Kitap Kontrolü", icon: IconBook },
+    { id: "katilim", label: "Derse Katılım", icon: IconUsers },
+  ];
+
+  return (
+    <div>
+      <Baslik title="Ders İçi" desc="Sistemde kayıtlı tüm öğrenciler için ödev takip, kitap kontrolü ve derse katılımı artı / eksi olarak işaretleyin. Sınıf, ders ve tarih seçin; birden fazla öğretmen aynı gün farklı dersler için ayrı ayrı kayıt girebilir." />
+      <div className="flex justify-center mb-6">
+        <div className="grid grid-cols-2 gap-3 w-full max-w-md">
+          {altSekmeler.map((t) => {
+            const active = altSekme === t.id;
+            const IconComp = t.icon;
+            return (
+              <button key={t.id} onClick={() => setAltSekme(t.id)}
+                className="flex flex-col items-center justify-center gap-1.5 px-4 py-4 rounded-xl text-sm font-semibold text-center transition-colors"
+                style={{ background: active ? "#0EA5E91A" : SURFACE, color: active ? "#0EA5E9" : SUBTLE, border: `1px solid ${active ? "#0EA5E9" : BORDER}` }}>
+                <IconComp size={22} color={active ? "#0EA5E9" : SUBTLE} />
+                <span className="leading-tight">{t.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {altSekme === "dersler" && (
+        <DersIciDersYonetim dersler={dersIciDersler} updateDersler={updateDersIciDersler} />
+      )}
+      {altSekme === "odev" && (
+        <DersIciTakip students={students} siniflar={siniflar} dersler={dersIciDersler} kayitlar={dersIciOdev} updateKayitlar={updateDersIciOdev}
+          tarih={tarih} setTarih={setTarih} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre} dersFiltre={dersFiltre} setDersFiltre={setDersFiltre}
+          kullaniciAdi={kullaniciAdi} baslik="Ödev Takip" aciklama="Sınıf, ders ve tarih seçin; öğrenci ödevini yaptıysa artı, yapmadıysa eksi işaretleyin." aktifRenk="#0EA5E9"
+          artiEtiket="Yaptı" eksiEtiket="Yapmadı" />
+      )}
+      {altSekme === "kitap" && (
+        <DersIciTakip students={students} siniflar={siniflar} dersler={dersIciDersler} kayitlar={dersIciKitap} updateKayitlar={updateDersIciKitap}
+          tarih={tarih} setTarih={setTarih} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre} dersFiltre={dersFiltre} setDersFiltre={setDersFiltre}
+          kullaniciAdi={kullaniciAdi} baslik="Kitap Kontrolü" aciklama="Sınıf, ders ve tarih seçin; öğrencinin kitabı yanındaysa/tamamsa artı, değilse eksi işaretleyin." aktifRenk="#0EA5E9" />
+      )}
+      {altSekme === "katilim" && (
+        <DersIciTakip students={students} siniflar={siniflar} dersler={dersIciDersler} kayitlar={dersIciKatilim} updateKayitlar={updateDersIciKatilim}
+          tarih={tarih} setTarih={setTarih} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre} dersFiltre={dersFiltre} setDersFiltre={setDersFiltre}
+          kullaniciAdi={kullaniciAdi} baslik="Derse Katılım" aciklama="Sınıf, ders ve tarih seçin; öğrenci derse aktif katıldıysa artı, katılmadıysa eksi işaretleyin." aktifRenk="#0EA5E9"
+          artiEtiket="Katıldı" eksiEtiket="Katılmadı" />
+      )}
+    </div>
+  );
+}
+
+function Notlar({ students, grades, updateGrades, hizliGit, hizliGitTuketildi }) {
   const [sinifFiltre, setSinifFiltre] = useState(SINIFLAR[0]);
   const [ders, setDers] = useState(DERSLER[0]);
   const sinifOgrencileri = useMemo(() => students.filter((s) => s.sinif === sinifFiltre).slice().sort((a, b) => a.ad.localeCompare(b.ad, "tr")), [students, sinifFiltre]);
@@ -7256,6 +7868,16 @@ function Notlar({ students, grades, updateGrades }) {
   const [tekDers, setTekDers] = useState(DERSLER[0]);
   const [tekGirisler, setTekGirisler] = useState({});
   useEffect(() => { setTekOgrenciId(null); }, [tekArama]);
+
+  // Anasayfa'daki "Hızlı Git" aramasından ("Ahmet Demir not" gibi) bu sekmeye yönlendirildiyse,
+  // "Numara ile Giriş" moduna geçip eşleşen öğrenciyi otomatik seçer. tekArama'ya DOKUNULMAZ —
+  // aksi halde yukarıdaki [tekArama] efekti tekOgrenciId'yi hemen null'a döndürür.
+  useEffect(() => {
+    if (!hizliGit || hizliGit.tab !== "notlar") return;
+    if (students.find((x) => x.id === hizliGit.ogrenciId)) { setMod("tek"); setTekOgrenciId(hizliGit.ogrenciId); }
+    hizliGitTuketildi && hizliGitTuketildi();
+    // eslint-disable-next-line
+  }, [hizliGit]);
   useEffect(() => { setTekGirisler({}); }, [tekDers, tekOgrenciId]);
 
   const tekEslesenler = useMemo(() => {
@@ -7578,7 +8200,7 @@ function Notlar({ students, grades, updateGrades }) {
 
 const VELI_TUM_DENEME_ID = "__VELI_TUM__";
 
-function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, davranisUyarilari, updateDavranisUyarilari, davranisNotlari, setTab }) {
+function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, dersIciOdev, dersIciKitap, dersIciKatilim, davranisUyarilari, updateDavranisUyarilari, davranisNotlari, setTab, hizliGit, hizliGitTuketildi }) {
   const [noGiris, setNoGiris] = useState("");
   const [ogrenci, setOgrenci] = useState(null);
   const [hata, setHata] = useState("");
@@ -7605,6 +8227,16 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
     setVeliUyari("");
     setAramaOdakli(false);
   };
+
+  // Anasayfa'daki "Hızlı Git" aramasından ("Ahmet Demir karne" gibi) bu sekmeye yönlendirildiyse,
+  // eşleşen öğrenciyi otomatik seçili getirir.
+  useEffect(() => {
+    if (!hizliGit || hizliGit.tab !== "karne") return;
+    const s = students.find((x) => x.id === hizliGit.ogrenciId);
+    if (s) ogrenciSec(s);
+    hizliGitTuketildi && hizliGitTuketildi();
+    // eslint-disable-next-line
+  }, [hizliGit]);
 
   const ara = () => {
     const q = noGiris.trim();
@@ -7812,6 +8444,78 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
       sorular: normalizeSoruKayit(soruCozum[koclukTarihSecili]?.[koclukOgrenci.id]).filter((m) => m.durum === "arti" || m.durum === "eksi"),
     };
   }, [koclukOgrenci, koclukTarihSecili, koclukSeciliTumMu, kocDevam, kitapKontrol, soruCozum]);
+
+  // Ders İçi (Ödev Takip / Kitap Kontrolü / Derse Katılım): koçluktan farklı olarak ayrı bir öğrenci
+  // listesine ihtiyaç duymaz — doğrudan bu (gerçek, sistemde kayıtlı) öğrencinin id'si üzerinden okunur.
+  const dersIciBilgi = useMemo(() => {
+    if (!ogrenci) return null;
+    const odev = dersIciSayim(dersIciOdev, ogrenci.id);
+    const kitap = dersIciSayim(dersIciKitap, ogrenci.id);
+    const katilim = dersIciSayim(dersIciKatilim, ogrenci.id);
+    const oranHesapla = (o) => (o.arti + o.eksi) ? Math.round((o.arti / (o.arti + o.eksi)) * 100) : null;
+    return {
+      odevArti: odev.arti, odevEksi: odev.eksi, odevToplam: odev.arti + odev.eksi, odevOrani: oranHesapla(odev),
+      kitapArti: kitap.arti, kitapEksi: kitap.eksi, kitapToplam: kitap.arti + kitap.eksi, kitapOrani: oranHesapla(kitap),
+      katilimArti: katilim.arti, katilimEksi: katilim.eksi, katilimToplam: katilim.arti + katilim.eksi, katilimOrani: oranHesapla(katilim),
+    };
+  }, [ogrenci, dersIciOdev, dersIciKitap, dersIciKatilim]);
+
+  const dersIciTarihleri = useMemo(() => {
+    if (!ogrenci) return [];
+    const set = new Set();
+    [dersIciOdev, dersIciKitap, dersIciKatilim].forEach((kayit) => {
+      Object.keys(kayit || {}).forEach((t) => {
+        const gunKaydi = kayit[t] || {};
+        const varMi = Object.values(gunKaydi).some((dersKaydi) => dersKaydi && dersKaydi[ogrenci.id]);
+        if (varMi) set.add(t);
+      });
+    });
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [ogrenci, dersIciOdev, dersIciKitap, dersIciKatilim]);
+
+  // Ders İçi verilerinin girildiği tüm derslerin (ödev/kitap/katılım genelinde) listesi — sağdaki
+  // ders filtresi menüsü içindir (sadece "Tüm Verilerin Toplamı" seçiliyken kullanılır).
+  const dersIciMevcutDersler = useMemo(() => {
+    if (!ogrenci) return [];
+    return dersIciMevcutDerslerHesapla([dersIciOdev, dersIciKitap, dersIciKatilim], ogrenci.id);
+  }, [ogrenci, dersIciOdev, dersIciKitap, dersIciKatilim]);
+
+  const [dersIciTarihSecili, setDersIciTarihSecili] = useState("");
+  const dersIciSeciliTumMu = dersIciTarihSecili === VELI_DERS_ICI_TOPLAM_ID;
+  // "Tüm Verilerin Toplamı" seçiliyken sağdaki butondan seçilen ders filtresi ("" = Tüm Dersler).
+  const [dersIciDersFiltre, setDersIciDersFiltre] = useState("");
+  useEffect(() => {
+    if (dersIciDersFiltre && !dersIciMevcutDersler.includes(dersIciDersFiltre)) setDersIciDersFiltre("");
+  }, [dersIciMevcutDersler]);
+  useEffect(() => {
+    if (dersIciTarihleri.length && dersIciTarihSecili !== VELI_DERS_ICI_TOPLAM_ID && !dersIciTarihleri.includes(dersIciTarihSecili)) {
+      setDersIciTarihSecili(VELI_DERS_ICI_TOPLAM_ID);
+    }
+    if (!dersIciTarihleri.length) setDersIciTarihSecili("");
+  }, [dersIciTarihleri]);
+
+  // Sağdaki ders filtresiyle seçilen derse ait (tüm tarihler genelinde) ödev/kitap/katılım artı-eksi özeti.
+  const dersIciSeciliDersVerisi = useMemo(() => {
+    if (!ogrenci || !dersIciDersFiltre) return null;
+    const odev = dersIciSayimDers(dersIciOdev, ogrenci.id, dersIciDersFiltre);
+    const kitap = dersIciSayimDers(dersIciKitap, ogrenci.id, dersIciDersFiltre);
+    const katilim = dersIciSayimDers(dersIciKatilim, ogrenci.id, dersIciDersFiltre);
+    const oranHesapla = (o) => (o.arti + o.eksi) ? Math.round((o.arti / (o.arti + o.eksi)) * 100) : null;
+    return {
+      odevArti: odev.arti, odevEksi: odev.eksi, odevToplam: odev.arti + odev.eksi, odevOrani: oranHesapla(odev),
+      kitapArti: kitap.arti, kitapEksi: kitap.eksi, kitapToplam: kitap.arti + kitap.eksi, kitapOrani: oranHesapla(kitap),
+      katilimArti: katilim.arti, katilimEksi: katilim.eksi, katilimToplam: katilim.arti + katilim.eksi, katilimOrani: oranHesapla(katilim),
+    };
+  }, [ogrenci, dersIciDersFiltre, dersIciOdev, dersIciKitap, dersIciKatilim]);
+
+  const dersIciSeciliGunVerisi = useMemo(() => {
+    if (!ogrenci || !dersIciTarihSecili || dersIciSeciliTumMu) return null;
+    return {
+      odev: dersIciGunKayitlari(dersIciOdev, dersIciTarihSecili, ogrenci.id),
+      kitap: dersIciGunKayitlari(dersIciKitap, dersIciTarihSecili, ogrenci.id),
+      katilim: dersIciGunKayitlari(dersIciKatilim, dersIciTarihSecili, ogrenci.id),
+    };
+  }, [ogrenci, dersIciTarihSecili, dersIciSeciliTumMu, dersIciOdev, dersIciKitap, dersIciKatilim]);
 
   const zayifDersler = useMemo(() => {
     const set = new Set();
@@ -8419,6 +9123,109 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
             </Kart>
           )}
 
+          {(dersIciBilgi && (dersIciBilgi.odevToplam || dersIciBilgi.kitapToplam || dersIciBilgi.katilimToplam)) ? (
+            <>
+              <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconGrad size={17} color="#0EA5E9" />Ders İçi</h2>
+              <Kart className="p-5 mb-6">
+                {dersIciTarihleri.length > 0 && (
+                  <div className="flex flex-col sm:flex-row gap-2 mb-4">
+                    <GoogleSelect value={dersIciTarihSecili} onChange={(e) => setDersIciTarihSecili(e.target.value)} className="w-full">
+                      <option value={VELI_DERS_ICI_TOPLAM_ID}>Tüm Verilerin Toplamı</option>
+                      {dersIciTarihleri.map((t) => <option key={t} value={t}>{fmtDateTR(t)}</option>)}
+                    </GoogleSelect>
+                    {dersIciMevcutDersler.length > 0 && (
+                      <GoogleSelect value={dersIciDersFiltre} onChange={(e) => setDersIciDersFiltre(e.target.value)} className="w-full sm:w-56 shrink-0">
+                        <option value="">Tüm Dersler</option>
+                        {dersIciMevcutDersler.map((d) => <option key={d} value={d}>{d}</option>)}
+                      </GoogleSelect>
+                    )}
+                  </div>
+                )}
+                {dersIciSeciliTumMu ? (
+                  dersIciDersFiltre ? (
+                    dersIciSeciliDersVerisi && (dersIciSeciliDersVerisi.odevToplam || dersIciSeciliDersVerisi.kitapToplam || dersIciSeciliDersVerisi.katilimToplam) ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        {dersIciSeciliDersVerisi.odevToplam > 0 && (
+                          <div className="rounded-lg p-3" style={{ border: `1px solid ${BORDER}` }}>
+                            <p className="text-xs" style={{ color: SUBTLE }}>Ödev Takip</p>
+                            <p className="text-lg font-semibold" style={{ color: dersIciSeciliDersVerisi.odevOrani < 50 ? RED : "#0EA5E9" }}>%{dersIciSeciliDersVerisi.odevOrani}</p>
+                            <p className="text-[11px]" style={{ color: SUBTLE }}>{dersIciSeciliDersVerisi.odevArti} artı · {dersIciSeciliDersVerisi.odevEksi} eksi</p>
+                          </div>
+                        )}
+                        {dersIciSeciliDersVerisi.kitapToplam > 0 && (
+                          <div className="rounded-lg p-3" style={{ border: `1px solid ${BORDER}` }}>
+                            <p className="text-xs" style={{ color: SUBTLE }}>Kitap Kontrolü</p>
+                            <p className="text-lg font-semibold" style={{ color: dersIciSeciliDersVerisi.kitapOrani < 50 ? RED : "#0EA5E9" }}>%{dersIciSeciliDersVerisi.kitapOrani}</p>
+                            <p className="text-[11px]" style={{ color: SUBTLE }}>{dersIciSeciliDersVerisi.kitapArti} artı · {dersIciSeciliDersVerisi.kitapEksi} eksi</p>
+                          </div>
+                        )}
+                        {dersIciSeciliDersVerisi.katilimToplam > 0 && (
+                          <div className="rounded-lg p-3" style={{ border: `1px solid ${BORDER}` }}>
+                            <p className="text-xs" style={{ color: SUBTLE }}>Derse Katılım</p>
+                            <p className="text-lg font-semibold" style={{ color: dersIciSeciliDersVerisi.katilimOrani < 50 ? RED : "#0EA5E9" }}>%{dersIciSeciliDersVerisi.katilimOrani}</p>
+                            <p className="text-[11px]" style={{ color: SUBTLE }}>{dersIciSeciliDersVerisi.katilimArti} artı · {dersIciSeciliDersVerisi.katilimEksi} eksi</p>
+                          </div>
+                        )}
+                      </div>
+                    ) : <p className="text-sm" style={{ color: SUBTLE }}>Bu ders için henüz kayıt girilmemiş.</p>
+                  ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {dersIciBilgi.odevToplam > 0 && (
+                      <div className="rounded-lg p-3" style={{ border: `1px solid ${BORDER}` }}>
+                        <p className="text-xs" style={{ color: SUBTLE }}>Ödev Takip</p>
+                        <p className="text-lg font-semibold" style={{ color: dersIciBilgi.odevOrani < 50 ? RED : "#0EA5E9" }}>%{dersIciBilgi.odevOrani}</p>
+                        <p className="text-[11px]" style={{ color: SUBTLE }}>{dersIciBilgi.odevArti} artı · {dersIciBilgi.odevEksi} eksi</p>
+                      </div>
+                    )}
+                    {dersIciBilgi.kitapToplam > 0 && (
+                      <div className="rounded-lg p-3" style={{ border: `1px solid ${BORDER}` }}>
+                        <p className="text-xs" style={{ color: SUBTLE }}>Kitap Kontrolü</p>
+                        <p className="text-lg font-semibold" style={{ color: dersIciBilgi.kitapOrani < 50 ? RED : "#0EA5E9" }}>%{dersIciBilgi.kitapOrani}</p>
+                        <p className="text-[11px]" style={{ color: SUBTLE }}>{dersIciBilgi.kitapArti} artı · {dersIciBilgi.kitapEksi} eksi</p>
+                      </div>
+                    )}
+                    {dersIciBilgi.katilimToplam > 0 && (
+                      <div className="rounded-lg p-3" style={{ border: `1px solid ${BORDER}` }}>
+                        <p className="text-xs" style={{ color: SUBTLE }}>Derse Katılım</p>
+                        <p className="text-lg font-semibold" style={{ color: dersIciBilgi.katilimOrani < 50 ? RED : "#0EA5E9" }}>%{dersIciBilgi.katilimOrani}</p>
+                        <p className="text-[11px]" style={{ color: SUBTLE }}>{dersIciBilgi.katilimArti} artı · {dersIciBilgi.katilimEksi} eksi</p>
+                      </div>
+                    )}
+                  </div>
+                  )
+                ) : dersIciSeciliGunVerisi && (
+                  <div className="flex flex-col gap-3 text-sm">
+                    {[
+                      { baslik: "Ödev Takip", liste: dersIciSeciliGunVerisi.odev },
+                      { baslik: "Kitap Kontrolü", liste: dersIciSeciliGunVerisi.kitap },
+                      { baslik: "Derse Katılım", liste: dersIciSeciliGunVerisi.katilim },
+                    ].map((g) => ({ ...g, liste: dersIciDersFiltre ? g.liste.filter((m) => m.ders === dersIciDersFiltre) : g.liste }))
+                      .filter((g) => g.liste.length > 0).map((g) => (
+                      <div key={g.baslik}>
+                        <p className="mb-1.5" style={{ color: SUBTLE }}>{g.baslik} (Ders Bazlı)</p>
+                        <div className="flex flex-wrap gap-2">
+                          {g.liste.map((m, i) => (
+                            <span key={i} className="text-xs font-medium px-2.5 py-1 rounded-full" style={{
+                              color: m.durum === "arti" ? GREEN : RED,
+                              background: m.durum === "arti" ? `${GREEN}14` : `${RED}14`,
+                            }}>{m.ders} — {m.durum === "arti" ? "Artı ✓" : "Eksi ✗"}</span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {dersIciDersFiltre && [dersIciSeciliGunVerisi.odev, dersIciSeciliGunVerisi.kitap, dersIciSeciliGunVerisi.katilim].every((l) => !l.some((m) => m.ders === dersIciDersFiltre)) && (
+                      <p className="text-sm" style={{ color: SUBTLE }}>Bu tarihte, seçili ders için kayıt bulunmuyor.</p>
+                    )}
+                  </div>
+                )}
+              </Kart>
+            </>
+          ) : (
+            <Kart className="p-4 mb-6" style={{ borderLeft: `3px solid ${BORDER}` }}>
+              <p className="text-sm" style={{ color: SUBTLE }}>Bu öğrenci için henüz Ders İçi kaydı girilmemiş.</p>
+            </Kart>
+          )}
+
           <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconNote size={17} color="#00897B" />Koçluk Notları</h2>
           {koclukNotlariOgrenci.length === 0 ? (
             <Kart className="p-4 mb-6" style={{ borderLeft: `3px solid ${BORDER}` }}>
@@ -8667,7 +9474,7 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
 // --- Veli Girişi: öğretmenin tam uygulamasından tamamen ayrı, sabit tek ekranlı, salt-okunur bir
 // kabuk. Veli hiçbir veriyi değiştiremez; sadece kendi öğrencisinin no'sunu veya adını yazarak
 // arar ve o öğrenciye ait yoklama, not ve deneme bilgilerini görüntüler.
-function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, davranisNotlari, baglanti, cikisYap }) {
+function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, baglanti, cikisYap }) {
   return (
     <div className="min-h-screen w-full" style={{ background: BG, color: INK }}>
       <header className="sticky top-0 z-30 flex items-center gap-3 px-4 sm:px-6 py-3 border-b" style={{ background: SURFACE, borderColor: BORDER }}>
@@ -8685,7 +9492,8 @@ function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denem
       <main className="flex-1 min-w-0 px-4 sm:px-8 py-6 sm:py-8 max-w-2xl mx-auto">
         <VeliOgrenciGoster veliNo={veliNo} students={students} grades={grades} dersYoklama={dersYoklama} attendance={attendance}
           denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
-          soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} davranisNotlari={davranisNotlari} />
+          soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari}
+          dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim} davranisNotlari={davranisNotlari} />
       </main>
     </div>
   );
@@ -8695,9 +9503,10 @@ function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denem
 // Böylece veli hiçbir zaman başka bir öğrencinin bilgisine erişemez.
 const VELI_TUM_DENEMELER_ID = "__TUM_DENEMELER__";
 const VELI_KOCLUK_TOPLAM_ID = "__KOCLUK_TOPLAM__";
+const VELI_DERS_ICI_TOPLAM_ID = "__DERS_ICI_TOPLAM__";
 const VELI_DAVRANIS_TUM_ID = "__DAVRANIS_TUM__";
 
-function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, davranisNotlari }) {
+function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari }) {
   const ogrenci = useMemo(() => students.find((s) => s.no === veliNo) || null, [students, veliNo]);
   const [denemeSecili, setDenemeSecili] = useState("");
   const denemeSeciliTumMu = denemeSecili === VELI_TUM_DENEMELER_ID;
@@ -8844,6 +9653,69 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
       sorular: normalizeSoruKayit(soruCozum[koclukTarihSecili]?.[kocluklKaydi.id]).filter((m) => m.durum === "arti" || m.durum === "eksi"),
     };
   }, [kocluklKaydi, koclukTarihSecili, koclukSeciliTumMu, kocDevam, kitapKontrol, soruCozum]);
+
+  // Ders İçi: koçluktan farklı olarak ayrı bir öğrenci listesine ihtiyaç yoktur — doğrudan velinin
+  // şifresiyle eşleşen (gerçek, sistemde kayıtlı) öğrencinin id'si üzerinden okunur.
+  const dersIciOzet = useMemo(() => {
+    if (!ogrenci) return null;
+    const odev = dersIciSayim(dersIciOdev, ogrenci.id);
+    const kitap = dersIciSayim(dersIciKitap, ogrenci.id);
+    const katilim = dersIciSayim(dersIciKatilim, ogrenci.id);
+    if (!(odev.arti + odev.eksi + kitap.arti + kitap.eksi + katilim.arti + katilim.eksi)) return null;
+    return { odevArti: odev.arti, odevEksi: odev.eksi, kitapArti: kitap.arti, kitapEksi: kitap.eksi, katilimArti: katilim.arti, katilimEksi: katilim.eksi };
+  }, [ogrenci, dersIciOdev, dersIciKitap, dersIciKatilim]);
+
+  const dersIciVeriTarihleri = useMemo(() => {
+    if (!ogrenci) return [];
+    const set = new Set();
+    [dersIciOdev, dersIciKitap, dersIciKatilim].forEach((kayit) => {
+      Object.keys(kayit || {}).forEach((t) => {
+        const gunKaydi = kayit[t] || {};
+        const varMi = Object.values(gunKaydi).some((dersKaydi) => dersKaydi && dersKaydi[ogrenci.id]);
+        if (varMi) set.add(t);
+      });
+    });
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [ogrenci, dersIciOdev, dersIciKitap, dersIciKatilim]);
+
+  // Ders İçi verilerinin girildiği tüm derslerin (ödev/kitap/katılım genelinde) listesi — sağdaki
+  // ders filtresi menüsü içindir (sadece "Tüm Verilerin Toplamı" seçiliyken kullanılır).
+  const dersIciMevcutDersler = useMemo(() => {
+    if (!ogrenci) return [];
+    return dersIciMevcutDerslerHesapla([dersIciOdev, dersIciKitap, dersIciKatilim], ogrenci.id);
+  }, [ogrenci, dersIciOdev, dersIciKitap, dersIciKatilim]);
+
+  const [dersIciTarihSecili, setDersIciTarihSecili] = useState("");
+  const dersIciSeciliTumMu = dersIciTarihSecili === VELI_DERS_ICI_TOPLAM_ID;
+  // "Tüm Verilerin Toplamı" seçiliyken sağdaki butondan seçilen ders filtresi ("" = Tüm Dersler).
+  const [dersIciDersFiltre, setDersIciDersFiltre] = useState("");
+  useEffect(() => {
+    if (dersIciDersFiltre && !dersIciMevcutDersler.includes(dersIciDersFiltre)) setDersIciDersFiltre("");
+  }, [dersIciMevcutDersler]);
+  useEffect(() => {
+    if (dersIciVeriTarihleri.length && dersIciTarihSecili !== VELI_DERS_ICI_TOPLAM_ID && !dersIciVeriTarihleri.includes(dersIciTarihSecili)) {
+      setDersIciTarihSecili(VELI_DERS_ICI_TOPLAM_ID);
+    }
+    if (!dersIciVeriTarihleri.length) setDersIciTarihSecili("");
+  }, [dersIciVeriTarihleri]);
+
+  // Sağdaki ders filtresiyle seçilen derse ait (tüm tarihler genelinde) ödev/kitap/katılım artı-eksi özeti.
+  const dersIciSeciliDersVerisi = useMemo(() => {
+    if (!ogrenci || !dersIciDersFiltre) return null;
+    const odev = dersIciSayimDers(dersIciOdev, ogrenci.id, dersIciDersFiltre);
+    const kitap = dersIciSayimDers(dersIciKitap, ogrenci.id, dersIciDersFiltre);
+    const katilim = dersIciSayimDers(dersIciKatilim, ogrenci.id, dersIciDersFiltre);
+    return { odevArti: odev.arti, odevEksi: odev.eksi, kitapArti: kitap.arti, kitapEksi: kitap.eksi, katilimArti: katilim.arti, katilimEksi: katilim.eksi };
+  }, [ogrenci, dersIciDersFiltre, dersIciOdev, dersIciKitap, dersIciKatilim]);
+
+  const dersIciSeciliGunVerisi = useMemo(() => {
+    if (!ogrenci || !dersIciTarihSecili || dersIciSeciliTumMu) return null;
+    return {
+      odev: dersIciGunKayitlari(dersIciOdev, dersIciTarihSecili, ogrenci.id),
+      kitap: dersIciGunKayitlari(dersIciKitap, dersIciTarihSecili, ogrenci.id),
+      katilim: dersIciGunKayitlari(dersIciKatilim, dersIciTarihSecili, ogrenci.id),
+    };
+  }, [ogrenci, dersIciTarihSecili, dersIciSeciliTumMu, dersIciOdev, dersIciKitap, dersIciKatilim]);
 
   // Davranış notları: öğretmenin girdiği kısa notlar, en yeniden en eskiye sıralı.
   const davranisNotlariOgrenci = useMemo(() => {
@@ -9219,6 +10091,67 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
                     ))}
                   </div>
                 </div>
+              )}
+            </div>
+          )}
+        </Kart>
+      )}
+
+      {dersIciOzet && (
+        <Kart className="p-5">
+          <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconGrad size={17} color="#0EA5E9" />Ders İçi</h2>
+          {dersIciVeriTarihleri.length > 0 && (
+            <div className="flex flex-col sm:flex-row gap-2 mb-4">
+              <GoogleSelect value={dersIciTarihSecili} onChange={(e) => setDersIciTarihSecili(e.target.value)} className="w-full">
+                <option value={VELI_DERS_ICI_TOPLAM_ID}>Tüm Verilerin Toplamı</option>
+                {dersIciVeriTarihleri.map((t) => <option key={t} value={t}>{fmtDateTR(t)}</option>)}
+              </GoogleSelect>
+              {dersIciMevcutDersler.length > 0 && (
+                <GoogleSelect value={dersIciDersFiltre} onChange={(e) => setDersIciDersFiltre(e.target.value)} className="w-full sm:w-56 shrink-0">
+                  <option value="">Tüm Dersler</option>
+                  {dersIciMevcutDersler.map((d) => <option key={d} value={d}>{d}</option>)}
+                </GoogleSelect>
+              )}
+            </div>
+          )}
+          {dersIciSeciliTumMu ? (
+            dersIciDersFiltre ? (
+              dersIciSeciliDersVerisi && (dersIciSeciliDersVerisi.odevArti + dersIciSeciliDersVerisi.odevEksi + dersIciSeciliDersVerisi.kitapArti + dersIciSeciliDersVerisi.kitapEksi + dersIciSeciliDersVerisi.katilimArti + dersIciSeciliDersVerisi.katilimEksi > 0) ? (
+                <div className="grid grid-cols-3 gap-3 text-sm">
+                  <div><p style={{ color: SUBTLE }} className="text-xs">Ödev Takip</p><p className="font-medium"><span style={{ color: GREEN }}>{dersIciSeciliDersVerisi.odevArti} +</span> / <span style={{ color: RED }}>{dersIciSeciliDersVerisi.odevEksi} -</span></p></div>
+                  <div><p style={{ color: SUBTLE }} className="text-xs">Kitap Kontrolü</p><p className="font-medium"><span style={{ color: GREEN }}>{dersIciSeciliDersVerisi.kitapArti} +</span> / <span style={{ color: RED }}>{dersIciSeciliDersVerisi.kitapEksi} -</span></p></div>
+                  <div><p style={{ color: SUBTLE }} className="text-xs">Derse Katılım</p><p className="font-medium"><span style={{ color: GREEN }}>{dersIciSeciliDersVerisi.katilimArti} +</span> / <span style={{ color: RED }}>{dersIciSeciliDersVerisi.katilimEksi} -</span></p></div>
+                </div>
+              ) : <p className="text-sm" style={{ color: SUBTLE }}>Bu ders için henüz kayıt girilmemiş.</p>
+            ) : (
+            <div className="grid grid-cols-3 gap-3 text-sm">
+              <div><p style={{ color: SUBTLE }} className="text-xs">Ödev Takip</p><p className="font-medium"><span style={{ color: GREEN }}>{dersIciOzet.odevArti} +</span> / <span style={{ color: RED }}>{dersIciOzet.odevEksi} -</span></p></div>
+              <div><p style={{ color: SUBTLE }} className="text-xs">Kitap Kontrolü</p><p className="font-medium"><span style={{ color: GREEN }}>{dersIciOzet.kitapArti} +</span> / <span style={{ color: RED }}>{dersIciOzet.kitapEksi} -</span></p></div>
+              <div><p style={{ color: SUBTLE }} className="text-xs">Derse Katılım</p><p className="font-medium"><span style={{ color: GREEN }}>{dersIciOzet.katilimArti} +</span> / <span style={{ color: RED }}>{dersIciOzet.katilimEksi} -</span></p></div>
+            </div>
+            )
+          ) : dersIciSeciliGunVerisi && (
+            <div className="flex flex-col gap-3 text-sm">
+              {[
+                { baslik: "Ödev Takip", liste: dersIciSeciliGunVerisi.odev },
+                { baslik: "Kitap Kontrolü", liste: dersIciSeciliGunVerisi.kitap },
+                { baslik: "Derse Katılım", liste: dersIciSeciliGunVerisi.katilim },
+              ].map((g) => ({ ...g, liste: dersIciDersFiltre ? g.liste.filter((m) => m.ders === dersIciDersFiltre) : g.liste }))
+                .filter((g) => g.liste.length > 0).map((g) => (
+                <div key={g.baslik}>
+                  <p className="mb-1.5" style={{ color: SUBTLE }}>{g.baslik} (Ders Bazlı)</p>
+                  <div className="flex flex-wrap gap-2">
+                    {g.liste.map((m, i) => (
+                      <span key={i} className="text-xs font-medium px-2.5 py-1 rounded-full" style={{
+                        color: m.durum === "arti" ? GREEN : RED,
+                        background: m.durum === "arti" ? `${GREEN}14` : `${RED}14`,
+                      }}>{m.ders} — {m.durum === "arti" ? "Artı ✓" : "Eksi ✗"}</span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {dersIciDersFiltre && [dersIciSeciliGunVerisi.odev, dersIciSeciliGunVerisi.kitap, dersIciSeciliGunVerisi.katilim].every((l) => !l.some((m) => m.ders === dersIciDersFiltre)) && (
+                <p className="text-sm" style={{ color: SUBTLE }}>Bu tarihte, seçili ders için kayıt bulunmuyor.</p>
               )}
             </div>
           )}
