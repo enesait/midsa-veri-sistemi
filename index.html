@@ -2913,23 +2913,45 @@ function GirisEkrani({ onGiris }) {
     if (!iletisimNeden) { setIletisimHata("Lütfen giriş nedeninizi seçin."); return; }
     if (iletisimNeden === "diger" && !iletisimDiger.trim()) { setIletisimHata("Lütfen kısaca açıklayın."); return; }
     setIletisimGonderiliyor(true);
-    try {
-      await db.ref(yonetimYoluAl() + "/mesajlar").push({
-        kimlik: iletisimKimlik,
-        ad: iletisimAd.trim() || null,
-        telefon: iletisimTelefon.trim(),
-        neden: iletisimNeden,
-        digerAciklama: iletisimNeden === "diger" ? iletisimDiger.trim() : null,
-        zaman: Date.now(),
-        okundu: false,
-      });
-      setIletisimBasarili(true);
-    } catch (e) {
-      console.error("İletişim mesajı gönderilemedi:", e);
-      setIletisimHata("Mesaj gönderilemedi. Lütfen tekrar deneyin.");
-    } finally {
-      setIletisimGonderiliyor(false);
+    const mesajVerisi = {
+      kimlik: iletisimKimlik,
+      ad: iletisimAd.trim() || null,
+      telefon: iletisimTelefon.trim(),
+      neden: iletisimNeden,
+      digerAciklama: iletisimNeden === "diger" ? iletisimDiger.trim() : null,
+      zaman: Date.now(),
+      okundu: false,
+    };
+    // GÜVENLİK/GÜVENİLİRLİK: anonim Firebase oturumu sayfa açılışında arka planda kurulur
+    // (bkz. "dene" fonksiyonundaki aynı açıklama). Bu form giriş ekranında, yani oturum henüz
+    // hazır olmayabilecekken kullanılabildiği için, oturum kurulmadan mesaj yazmaya çalışmak
+    // veritabanı kurallarınca sessizce reddedilip mesajın Patron'a hiç ulaşmamasına yol açabilirdi.
+    // Çok yavaş/kararsız bağlantılarda tek bir bekleme/deneme yetmeyebileceğinden, burada oturumu
+    // daha uzun bekliyor ve yazma isteğini de birkaç kez tekrar deniyoruz.
+    let sonHata = null;
+    for (let deneme = 0; deneme < 3; deneme++) {
+      try {
+        if (!auth.currentUser) {
+          await new Promise((resolve) => {
+            const zamanAsimi = setTimeout(resolve, 8000);
+            const iptal = auth.onAuthStateChanged((k) => { if (k) { clearTimeout(zamanAsimi); iptal(); resolve(); } });
+          });
+        }
+        await db.ref(yonetimYoluAl() + "/mesajlar").push(mesajVerisi);
+        setIletisimBasarili(true);
+        setIletisimGonderiliyor(false);
+        return;
+      } catch (e) {
+        sonHata = e;
+        console.error(`İletişim mesajı gönderilemedi (deneme ${deneme + 1}/3):`, e);
+        if (deneme < 2) await new Promise((r) => setTimeout(r, 1500));
+      }
     }
+    setIletisimHata(
+      "Mesaj gönderilemedi. İnternet bağlantınızı kontrol edip tekrar deneyin." +
+      (sonHata && sonHata.code ? ` (Hata kodu: ${sonHata.code})` : "")
+    );
+    setIletisimGonderiliyor(false);
   };
 
   // Girişi tamamlar: Ana Kullanıcı kimliğini ve giriş yapan kişinin adını (varsa) localStorage'a
