@@ -2835,7 +2835,6 @@ function veliSifresindenNoCoz(deger, students, tenantOnek) {
 // Giriş ekranındaki iletişim formunda kullanılan seçenekler. "Mesajlar" kutusunda etiketleri
 // göstermek için de aynı liste kullanılır (bkz. Patron Paneli).
 const ILETISIM_KIMLIK_SECENEKLERI = [
-  { id: "ogrenci", label: "Öğrenci" },
   { id: "ogretmen", label: "Öğretmen" },
   { id: "yonetici", label: "Yönetici" },
 ];
@@ -2856,6 +2855,7 @@ function GirisEkrani({ onGiris }) {
   const [iletisimAcik, setIletisimAcik] = useState(false);
   const [iletisimKimlik, setIletisimKimlik] = useState("");
   const [iletisimAd, setIletisimAd] = useState("");
+  const [iletisimYoneticiAdi, setIletisimYoneticiAdi] = useState(""); // öğretmenin şifresini veren yönetici (Ana Kullanıcı) adı
   const [iletisimTelefon, setIletisimTelefon] = useState("");
   const [iletisimNeden, setIletisimNeden] = useState("");
   const [iletisimDiger, setIletisimDiger] = useState("");
@@ -2902,56 +2902,64 @@ function GirisEkrani({ onGiris }) {
   };
 
   const iletisimFormuTemizle = () => {
-    setIletisimKimlik(""); setIletisimAd(""); setIletisimTelefon("");
+    setIletisimKimlik(""); setIletisimAd(""); setIletisimYoneticiAdi(""); setIletisimTelefon("");
     setIletisimNeden(""); setIletisimDiger(""); setIletisimHata(""); setIletisimBasarili(false);
   };
   const iletisimKapat = () => { setIletisimAcik(false); iletisimFormuTemizle(); };
   const iletisimGonder = async () => {
     setIletisimHata("");
     if (!iletisimKimlik) { setIletisimHata("Lütfen kimliğinizi seçin."); return; }
+    if (iletisimKimlik === "ogretmen" && !iletisimYoneticiAdi.trim()) { setIletisimHata("Lütfen şifrenizi veren yöneticinin adını girin."); return; }
     if (!iletisimTelefon.trim()) { setIletisimHata("Lütfen telefon numaranızı girin."); return; }
     if (!iletisimNeden) { setIletisimHata("Lütfen giriş nedeninizi seçin."); return; }
     if (iletisimNeden === "diger" && !iletisimDiger.trim()) { setIletisimHata("Lütfen kısaca açıklayın."); return; }
     setIletisimGonderiliyor(true);
-    const mesajVerisi = {
-      kimlik: iletisimKimlik,
-      ad: iletisimAd.trim() || null,
-      telefon: iletisimTelefon.trim(),
-      neden: iletisimNeden,
-      digerAciklama: iletisimNeden === "diger" ? iletisimDiger.trim() : null,
-      zaman: Date.now(),
-      okundu: false,
-    };
-    // GÜVENLİK/GÜVENİLİRLİK: anonim Firebase oturumu sayfa açılışında arka planda kurulur
-    // (bkz. "dene" fonksiyonundaki aynı açıklama). Bu form giriş ekranında, yani oturum henüz
-    // hazır olmayabilecekken kullanılabildiği için, oturum kurulmadan mesaj yazmaya çalışmak
-    // veritabanı kurallarınca sessizce reddedilip mesajın Patron'a hiç ulaşmamasına yol açabilirdi.
-    // Çok yavaş/kararsız bağlantılarda tek bir bekleme/deneme yetmeyebileceğinden, burada oturumu
-    // daha uzun bekliyor ve yazma isteğini de birkaç kez tekrar deniyoruz.
-    let sonHata = null;
-    for (let deneme = 0; deneme < 3; deneme++) {
-      try {
-        if (!auth.currentUser) {
-          await new Promise((resolve) => {
-            const zamanAsimi = setTimeout(resolve, 8000);
-            const iptal = auth.onAuthStateChanged((k) => { if (k) { clearTimeout(zamanAsimi); iptal(); resolve(); } });
-          });
-        }
-        await db.ref(yonetimYoluAl() + "/mesajlar").push(mesajVerisi);
-        setIletisimBasarili(true);
-        setIletisimGonderiliyor(false);
-        return;
-      } catch (e) {
-        sonHata = e;
-        console.error(`İletişim mesajı gönderilemedi (deneme ${deneme + 1}/3):`, e);
-        if (deneme < 2) await new Promise((r) => setTimeout(r, 1500));
+    try {
+      // GÜVENLİK/GÜVENİLİRLİK: anonim Firebase oturumu sayfa açılışında arka planda kurulur
+      // (bkz. "dene" fonksiyonundaki aynı açıklama). Bu form giriş ekranında, yani oturum henüz
+      // hazır olmayabilecekken kullanılabildiği için, oturum kurulmadan mesaj yazmaya çalışmak
+      // veritabanı kurallarınca sessizce reddedilip mesajın Patron'a hiç ulaşmamasına yol açabilirdi.
+      // Yazmadan önce burada da kısaca oturumun hazır olmasını bekliyoruz.
+      if (!auth.currentUser) {
+        await new Promise((resolve) => {
+          const zamanAsimi = setTimeout(resolve, 4000);
+          const iptal = auth.onAuthStateChanged((k) => { if (k) { clearTimeout(zamanAsimi); iptal(); resolve(); } });
+        });
       }
+
+      // Öğretmen ise: belirttiği yöneticinin (Ana Kullanıcı) sistemde gerçekten var olduğunu
+      // doğrula. Eşleşme bulunamazsa mesaj hiç gönderilmez. Listeyi taze çekiyoruz ki az önce
+      // eklenmiş/değiştirilmiş bir yönetici de doğru şekilde tanınsın.
+      let eslesenYonetici = null;
+      if (iletisimKimlik === "ogretmen") {
+        const guncelYonetimVeri = await yonetimVeriTazeGetir();
+        const guncelAnaKullaniciListesi = Object.entries(guncelYonetimVeri.anaKullanicilar || {}).map(([id, a]) => ({ id, ...a }));
+        const girilenAd = iletisimYoneticiAdi.trim().toLocaleLowerCase("tr");
+        eslesenYonetici = guncelAnaKullaniciListesi.find((a) => a.ad && String(a.ad).trim().toLocaleLowerCase("tr") === girilenAd) || null;
+        if (!eslesenYonetici) {
+          setIletisimHata("Belirttiğiniz yönetici sistemde bulunamadı. Lütfen adını kontrol edip tekrar deneyin.");
+          setIletisimGonderiliyor(false);
+          return;
+        }
+      }
+
+      await db.ref(yonetimYoluAl() + "/mesajlar").push({
+        kimlik: iletisimKimlik,
+        ad: iletisimAd.trim() || null,
+        yoneticiAdi: iletisimKimlik === "ogretmen" ? eslesenYonetici.ad : null,
+        telefon: iletisimTelefon.trim(),
+        neden: iletisimNeden,
+        digerAciklama: iletisimNeden === "diger" ? iletisimDiger.trim() : null,
+        zaman: Date.now(),
+        okundu: false,
+      });
+      setIletisimBasarili(true);
+    } catch (e) {
+      console.error("İletişim mesajı gönderilemedi:", e);
+      setIletisimHata("Mesaj gönderilemedi. Lütfen tekrar deneyin.");
+    } finally {
+      setIletisimGonderiliyor(false);
     }
-    setIletisimHata(
-      "Mesaj gönderilemedi. İnternet bağlantınızı kontrol edip tekrar deneyin." +
-      (sonHata && sonHata.code ? ` (Hata kodu: ${sonHata.code})` : "")
-    );
-    setIletisimGonderiliyor(false);
   };
 
   // Girişi tamamlar: Ana Kullanıcı kimliğini ve giriş yapan kişinin adını (varsa) localStorage'a
@@ -3163,6 +3171,12 @@ function GirisEkrani({ onGiris }) {
                 </div>
 
                 <GoogleInput type="text" value={iletisimAd} onChange={(e) => setIletisimAd(e.target.value)} placeholder="Ad Soyad (isteğe bağlı)" className="w-full mb-3" />
+                {iletisimKimlik === "ogretmen" && (
+                  <>
+                    <GoogleInput type="text" value={iletisimYoneticiAdi} onChange={(e) => setIletisimYoneticiAdi(e.target.value)} placeholder="Şifrenizi veren yöneticinin adı" className="w-full mb-1.5" />
+                    <p className="text-[11px] mb-3" style={{ color: SUBTLE }}>Size giriş şifresini veren yöneticinin (Ana Kullanıcı) adını yazın. Sistemde bu isimde bir yönetici bulunamazsa mesajınız gönderilemez.</p>
+                  </>
+                )}
                 <GoogleInput type="tel" value={iletisimTelefon} onChange={(e) => setIletisimTelefon(e.target.value)} placeholder="Telefon numaranız" className="w-full mb-3" />
 
                 <p className="text-xs font-medium mb-1.5" style={{ color: SUBTLE }}>Giriş nedeniniz</p>
@@ -4334,6 +4348,9 @@ function ProgramSahibiPaneli({ cikisYap }) {
                           <IconPhone size={14} color={SUBTLE} />
                           <a href={`tel:${m.telefon}`} className="font-medium hover:underline">{m.telefon}</a>
                         </div>
+                        {m.kimlik === "ogretmen" && m.yoneticiAdi && (
+                          <p className="text-[11px] mb-1.5" style={{ color: SUBTLE }}>Şifreyi veren yönetici: <span style={{ color: INK, fontWeight: 500 }}>{m.yoneticiAdi}</span></p>
+                        )}
                         <p className="text-sm" style={{ color: INK }}>{neden ? neden.label : m.neden}</p>
                         {m.neden === "diger" && m.digerAciklama && (
                           <p className="text-sm mt-1 px-3 py-2 rounded-lg" style={{ background: BG, color: SUBTLE }}>{m.digerAciklama}</p>
