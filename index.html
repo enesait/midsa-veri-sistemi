@@ -2832,18 +2832,44 @@ function veliSifresindenNoCoz(deger, students, tenantOnek) {
   }
   return null;
 }
+// Giriş ekranındaki iletişim formunda kullanılan seçenekler. "Mesajlar" kutusunda etiketleri
+// göstermek için de aynı liste kullanılır (bkz. Patron Paneli).
+const ILETISIM_KIMLIK_SECENEKLERI = [
+  { id: "ogrenci", label: "Öğrenci" },
+  { id: "ogretmen", label: "Öğretmen" },
+  { id: "yonetici", label: "Yönetici" },
+];
+const ILETISIM_NEDEN_SECENEKLERI = [
+  { id: "sifre", label: "Şifremi unuttum / şifre çalışmıyor" },
+  { id: "giris", label: "Girişte teknik bir sorun yaşıyorum" },
+  { id: "uyelik", label: "Yeni üyelik / kayıt almak istiyorum" },
+  { id: "diger", label: "Diğer" },
+];
+
 function GirisEkrani({ onGiris }) {
   const [sifre, setSifre] = useState("");
   const [hata, setHata] = useState("");
   const [araniyor, setAraniyor] = useState(false);
   const [yonetimVeri, setYonetimVeri] = useState({ sahipSifre: "", anaKullanicilar: {} });
+  // İletişim formu: giriş ekranındaki "İletişime Geçin" artık doğrudan Telegram/telefon açmaz;
+  // kısa bir form dolduruldıktan sonra mesaj sadece Patron'un "Mesajlar" kutusuna düşer.
+  const [iletisimAcik, setIletisimAcik] = useState(false);
+  const [iletisimKimlik, setIletisimKimlik] = useState("");
+  const [iletisimAd, setIletisimAd] = useState("");
+  const [iletisimTelefon, setIletisimTelefon] = useState("");
+  const [iletisimNeden, setIletisimNeden] = useState("");
+  const [iletisimDiger, setIletisimDiger] = useState("");
+  const [iletisimHata, setIletisimHata] = useState("");
+  const [iletisimGonderiliyor, setIletisimGonderiliyor] = useState(false);
+  const [iletisimBasarili, setIletisimBasarili] = useState(false);
   // Program Sahibi verilerini (şifresi + Ana Kullanıcı listesi) tek seferlik çekiyoruz. Artık her
   // Ana Kullanıcının verisi kendi izole alanında olduğu için (bkz. legacyVeriyiSaitCelikeTasi),
   // kökteki eski/varsayılan veriye giriş ekranından doğrudan bir erişim kalmadı.
+  const yonetimYuklendiRef = useRef(false);
   useEffect(() => {
     if (!firebaseHazir) return;
     db.ref(yonetimYoluAl()).once("value")
-      .then((snap) => setYonetimVeri(snap.val() || { sahipSifre: "", anaKullanicilar: {} }))
+      .then((snap) => { setYonetimVeri(snap.val() || { sahipSifre: "", anaKullanicilar: {} }); yonetimYuklendiRef.current = true; })
       .catch((e) => console.error("Giriş için yönetim verisi alınamadı:", e));
   }, []);
 
@@ -2851,6 +2877,60 @@ function GirisEkrani({ onGiris }) {
     () => Object.entries(yonetimVeri.anaKullanicilar || {}).map(([id, a]) => ({ id, ...a })),
     [yonetimVeri]
   );
+
+  // GÜVENİLİRLİK: Sayfa (özellikle paylaşılan bir link üzerinden) yeni açıldığında yukarıdaki veri
+  // arka planda çekilirken kullanıcı hemen "Giriş Yap"a basarsa -özellikle yavaş/kararsız bir
+  // bağlantıda- bu veri henüz gelmemiş olabilir. Böyle bir anda "dene" fonksiyonu listeyi boş
+  // sanıp doğru şifreyi bile "hatalı" sayardı; bu da bildirilen aralıklı giriş sorununun sebebiydi.
+  // Bunu önlemek için "dene" her zaman -state'in güncellenmesini beklemeden- veriyi taze olarak
+  // (gerekirse birkaç kez deneyerek) kendisi çeker.
+  const yonetimVeriTazeGetir = async () => {
+    if (yonetimYuklendiRef.current) return yonetimVeri;
+    for (let deneme = 0; deneme < 3; deneme++) {
+      try {
+        const snap = await db.ref(yonetimYoluAl()).once("value");
+        const v = snap.val() || { sahipSifre: "", anaKullanicilar: {} };
+        setYonetimVeri(v);
+        yonetimYuklendiRef.current = true;
+        return v;
+      } catch (e) {
+        console.error("Yönetim verisi denemesi başarısız (" + (deneme + 1) + "/3):", e);
+        if (deneme < 2) await new Promise((r) => setTimeout(r, 800));
+      }
+    }
+    return yonetimVeri;
+  };
+
+  const iletisimFormuTemizle = () => {
+    setIletisimKimlik(""); setIletisimAd(""); setIletisimTelefon("");
+    setIletisimNeden(""); setIletisimDiger(""); setIletisimHata(""); setIletisimBasarili(false);
+  };
+  const iletisimKapat = () => { setIletisimAcik(false); iletisimFormuTemizle(); };
+  const iletisimGonder = async () => {
+    setIletisimHata("");
+    if (!iletisimKimlik) { setIletisimHata("Lütfen kimliğinizi seçin."); return; }
+    if (!iletisimTelefon.trim()) { setIletisimHata("Lütfen telefon numaranızı girin."); return; }
+    if (!iletisimNeden) { setIletisimHata("Lütfen giriş nedeninizi seçin."); return; }
+    if (iletisimNeden === "diger" && !iletisimDiger.trim()) { setIletisimHata("Lütfen kısaca açıklayın."); return; }
+    setIletisimGonderiliyor(true);
+    try {
+      await db.ref(yonetimYoluAl() + "/mesajlar").push({
+        kimlik: iletisimKimlik,
+        ad: iletisimAd.trim() || null,
+        telefon: iletisimTelefon.trim(),
+        neden: iletisimNeden,
+        digerAciklama: iletisimNeden === "diger" ? iletisimDiger.trim() : null,
+        zaman: Date.now(),
+        okundu: false,
+      });
+      setIletisimBasarili(true);
+    } catch (e) {
+      console.error("İletişim mesajı gönderilemedi:", e);
+      setIletisimHata("Mesaj gönderilemedi. Lütfen tekrar deneyin.");
+    } finally {
+      setIletisimGonderiliyor(false);
+    }
+  };
 
   // Girişi tamamlar: Ana Kullanıcı kimliğini ve giriş yapan kişinin adını (varsa) localStorage'a
   // yazar ve üst bileşene bildirir; böylece adı soyadı Anasayfa'da ve kenar menüde gösterilebilir.
@@ -2867,61 +2947,69 @@ function GirisEkrani({ onGiris }) {
   const dene = async () => {
     const deger = sifre.trim();
     if (!deger) { setHata("Lütfen şifrenizi girin."); return; }
-    // GÜVENLİK: anonim Firebase oturumu sayfa açılışında arka planda kurulur; çok hızlı giriş
-    // denemelerinde henüz hazır olmayabilir. Kimlik kanıtı yazabilmek için burada kısaca bekleriz.
-    if (!auth.currentUser) {
-      await new Promise((resolve) => {
-        const zamanAsimi = setTimeout(resolve, 4000);
-        const iptal = auth.onAuthStateChanged((k) => { if (k) { clearTimeout(zamanAsimi); iptal(); resolve(); } });
-      });
-    }
-
-    // 1) Program Sahibi şifresi
-    const sahipSifre = (yonetimVeri.sahipSifre && String(yonetimVeri.sahipSifre).trim()) || DEFAULT_SAHIP_SIFRE;
-    if (deger === sahipSifre) {
-      try { localStorage.setItem(YETKI_ANAHTARI, "sahip"); localStorage.removeItem(ANA_KULLANICI_KIMLIK_ANAHTARI); localStorage.removeItem(KULLANICI_ADI_ANAHTARI); } catch (e) {}
-      onGiris("sahip", null, null, null, null);
-      return;
-    }
-
-    // 2) Program Sahibi'nin oluşturduğu Ana Kullanıcı şifrelerinden biri (ör. "Sait Çelik")
-    // GÜVENLİK: Ana Kullanıcı (yönetici) güvenlik eşleştirme listesi eksik/eskiyse otomatik tazelenir.
-    try {
-      const anaHarita = {};
-      anaKullaniciListesi.forEach((a) => { if (a && a.sifre) anaHarita[String(a.sifre).trim().toUpperCase()] = a.id; });
-      await db.ref(yonetimYoluAl() + "/_anaSifreId").set(anaHarita);
-    } catch (e) { console.error("Yönetici güvenlik haritası tazelenemedi:", e); }
-    const anaEslesme = anaKullaniciListesi.find((a) => a.sifre && deger.toUpperCase() === String(a.sifre).trim().toUpperCase());
-    if (anaEslesme) {
-      VERI_KOK = tenantYoluAl(anaEslesme.id);
-      // GÜVENLİK: yönetici kimlik kanıtı yazılır (bkz. veli girişindeki açıklama).
-      try {
-        await db.ref(VERI_KOK + "/_yetkiler/" + auth.currentUser.uid).set({
-          rol: "admin", kanit: deger.toUpperCase(), zaman: Date.now(),
-        });
-      } catch (e) { console.error("Yönetici kimlik kanıtı yazılamadı:", e); }
-      // Öğretmen girişinde olduğu gibi bir oturum kaydı açılır; böylece Program Sahibi bu
-      // Ana Kullanıcıyı, hesabını silmeden çıkışa zorlayabilir (bkz. ProgramSahibiPaneli).
-      const oturumId = oturumBaslat("admin", null);
-      try {
-        localStorage.setItem(YETKI_ANAHTARI, "admin");
-        if (oturumId) localStorage.setItem(OTURUM_ANAHTARI, oturumId);
-      } catch (e) {}
-      girisiTamamla("admin", null, oturumId, anaEslesme.id, anaEslesme.ad || null);
-      return;
-    }
-
-    // 3) Ana Kullanıcıların oluşturduğu öğretmen / veli şifreleri: her Ana Kullanıcının verisi
-    // kendi izole alanında tutulduğu için sırayla taranır (eşleşme bulununca durur). Bu tarama
-    // yalnızca kayıtlı Ana Kullanıcıların kendi alanlarına baktığı için, bir Ana Kullanıcının
-    // (ör. "Sait Çelik") verisine başka bir Ana Kullanıcının şifresiyle asla ulaşılamaz.
-    if (anaKullaniciListesi.length === 0) {
-      setHata("Şifre hatalı. Lütfen tekrar deneyin.");
-      return;
-    }
     setAraniyor(true);
     try {
-      for (const ana of anaKullaniciListesi) {
+      // GÜVENLİK: anonim Firebase oturumu sayfa açılışında arka planda kurulur; çok hızlı giriş
+      // denemelerinde henüz hazır olmayabilir. Kimlik kanıtı yazabilmek için burada kısaca bekleriz.
+      // Aynı anda, Program Sahibi/Ana Kullanıcı verisinin de (özellikle sayfa yeni açıldıysa) taze ve
+      // tam olarak gelmiş olmasını bekliyoruz; aksi halde doğru şifreler bile "hatalı" sayılabilirdi.
+      const [, guncelYonetimVeri] = await Promise.all([
+        (async () => {
+          if (!auth.currentUser) {
+            await new Promise((resolve) => {
+              const zamanAsimi = setTimeout(resolve, 4000);
+              const iptal = auth.onAuthStateChanged((k) => { if (k) { clearTimeout(zamanAsimi); iptal(); resolve(); } });
+            });
+          }
+        })(),
+        yonetimVeriTazeGetir(),
+      ]);
+      const guncelAnaKullaniciListesi = Object.entries(guncelYonetimVeri.anaKullanicilar || {}).map(([id, a]) => ({ id, ...a }));
+
+      // 1) Program Sahibi şifresi
+      const sahipSifre = (guncelYonetimVeri.sahipSifre && String(guncelYonetimVeri.sahipSifre).trim()) || DEFAULT_SAHIP_SIFRE;
+      if (deger === sahipSifre) {
+        try { localStorage.setItem(YETKI_ANAHTARI, "sahip"); localStorage.removeItem(ANA_KULLANICI_KIMLIK_ANAHTARI); localStorage.removeItem(KULLANICI_ADI_ANAHTARI); } catch (e) {}
+        onGiris("sahip", null, null, null, null);
+        return;
+      }
+
+      // 2) Program Sahibi'nin oluşturduğu Ana Kullanıcı şifrelerinden biri (ör. "Sait Çelik")
+      // GÜVENLİK: Ana Kullanıcı (yönetici) güvenlik eşleştirme listesi eksik/eskiyse otomatik tazelenir.
+      try {
+        const anaHarita = {};
+        guncelAnaKullaniciListesi.forEach((a) => { if (a && a.sifre) anaHarita[String(a.sifre).trim().toUpperCase()] = a.id; });
+        await db.ref(yonetimYoluAl() + "/_anaSifreId").set(anaHarita);
+      } catch (e) { console.error("Yönetici güvenlik haritası tazelenemedi:", e); }
+      const anaEslesme = guncelAnaKullaniciListesi.find((a) => a.sifre && deger.toUpperCase() === String(a.sifre).trim().toUpperCase());
+      if (anaEslesme) {
+        VERI_KOK = tenantYoluAl(anaEslesme.id);
+        // GÜVENLİK: yönetici kimlik kanıtı yazılır (bkz. veli girişindeki açıklama).
+        try {
+          await db.ref(VERI_KOK + "/_yetkiler/" + auth.currentUser.uid).set({
+            rol: "admin", kanit: deger.toUpperCase(), zaman: Date.now(),
+          });
+        } catch (e) { console.error("Yönetici kimlik kanıtı yazılamadı:", e); }
+        // Öğretmen girişinde olduğu gibi bir oturum kaydı açılır; böylece Program Sahibi bu
+        // Ana Kullanıcıyı, hesabını silmeden çıkışa zorlayabilir (bkz. ProgramSahibiPaneli).
+        const oturumId = oturumBaslat("admin", null);
+        try {
+          localStorage.setItem(YETKI_ANAHTARI, "admin");
+          if (oturumId) localStorage.setItem(OTURUM_ANAHTARI, oturumId);
+        } catch (e) {}
+        girisiTamamla("admin", null, oturumId, anaEslesme.id, anaEslesme.ad || null);
+        return;
+      }
+
+      // 3) Ana Kullanıcıların oluşturduğu öğretmen / veli şifreleri: her Ana Kullanıcının verisi
+      // kendi izole alanında tutulduğu için sırayla taranır (eşleşme bulununca durur). Bu tarama
+      // yalnızca kayıtlı Ana Kullanıcıların kendi alanlarına baktığı için, bir Ana Kullanıcının
+      // (ör. "Sait Çelik") verisine başka bir Ana Kullanıcının şifresiyle asla ulaşılamaz.
+      if (guncelAnaKullaniciListesi.length === 0) {
+        setHata("Şifre hatalı. Lütfen tekrar deneyin.");
+        return;
+      }
+      for (const ana of guncelAnaKullaniciListesi) {
         const kok = tenantYoluAl(ana.id);
         const [ogretmenSnap, ogrenciSnap, onekSnap] = await Promise.all([
           db.ref(kok + "/ogretmenSifreleri").once("value"),
@@ -3011,14 +3099,77 @@ function GirisEkrani({ onGiris }) {
           {araniyor ? "Aranıyor…" : "Giriş Yap"}
         </button>
         <p className="text-xs mt-4 text-center" style={{ color: SUBTLE }}>Veli iseniz öğretmeninizden aldığınız şifreyi girin; girişten sonra doğrudan kendi öğrencinizin bilgileri açılır.</p>
-        {yonetimVeri.telegramKullaniciAdi && (
-          <a href={`https://t.me/${yonetimVeri.telegramKullaniciAdi}`} target="_blank" rel="noopener noreferrer"
-            className="mt-4 w-full flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-full text-sm font-medium transition-shadow"
-            style={{ border: `1px solid ${BORDER}`, color: INK }}>
-            İletişime Geçin
-          </a>
-        )}
+        <button onClick={() => setIletisimAcik(true)}
+          className="mt-4 w-full flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-full text-sm font-medium transition-shadow"
+          style={{ border: `1px solid ${BORDER}`, color: INK }}>
+          İletişime Geçin
+        </button>
       </Kart>
+
+      {iletisimAcik && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.45)" }}>
+          <Kart className="w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
+            {iletisimBasarili ? (
+              <div className="flex flex-col items-center text-center py-4">
+                <div className="w-12 h-12 rounded-full flex items-center justify-center mb-3" style={{ background: `${GREEN}1A` }}>
+                  <IconCheck size={22} color={GREEN} />
+                </div>
+                <h2 className="font-display text-base font-medium mb-1">Mesajınız iletildi</h2>
+                <p className="text-sm mb-4" style={{ color: SUBTLE }}>En kısa sürede sizinle iletişime geçilecektir.</p>
+                <button onClick={iletisimKapat} className="px-5 py-2.5 rounded-full text-sm font-medium text-white" style={{ background: BLUE }}>Kapat</button>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="font-display text-base font-medium">İletişime Geçin</h2>
+                  <button onClick={iletisimKapat} className="p-1.5 rounded-full hover:bg-gray-100"><IconX size={16} color={SUBTLE} /></button>
+                </div>
+
+                <div className="mb-3 px-3.5 py-2.5 rounded-xl text-xs" style={{ background: `${RED}14`, border: `1px solid ${RED}`, color: RED }}>
+                  Sizinle Telegram üzerinden iletişime geçilecektir. Telegramınız yoksa sizinle iletişime geçilemeyecektir.
+                </div>
+
+                <p className="text-xs font-medium mb-1.5" style={{ color: SUBTLE }}>Kimliğiniz</p>
+                <div className="flex gap-2 mb-3">
+                  {ILETISIM_KIMLIK_SECENEKLERI.map((k) => (
+                    <button key={k.id} onClick={() => setIletisimKimlik(k.id)}
+                      className="flex-1 px-2 py-2 rounded-full text-xs font-medium border transition-colors"
+                      style={iletisimKimlik === k.id ? { background: BLUE, borderColor: BLUE, color: "#fff" } : { background: SURFACE, borderColor: BORDER, color: INK }}>
+                      {k.label}
+                    </button>
+                  ))}
+                </div>
+
+                <GoogleInput type="text" value={iletisimAd} onChange={(e) => setIletisimAd(e.target.value)} placeholder="Ad Soyad (isteğe bağlı)" className="w-full mb-3" />
+                <GoogleInput type="tel" value={iletisimTelefon} onChange={(e) => setIletisimTelefon(e.target.value)} placeholder="Telefon numaranız" className="w-full mb-3" />
+
+                <p className="text-xs font-medium mb-1.5" style={{ color: SUBTLE }}>Giriş nedeniniz</p>
+                <div className="flex flex-col gap-1.5 mb-3">
+                  {ILETISIM_NEDEN_SECENEKLERI.map((n) => (
+                    <button key={n.id} onClick={() => setIletisimNeden(n.id)}
+                      className="w-full text-left px-3 py-2 rounded-xl text-sm border transition-colors"
+                      style={iletisimNeden === n.id ? { background: `${BLUE}14`, borderColor: BLUE, color: BLUE } : { background: SURFACE, borderColor: BORDER, color: INK }}>
+                      {n.label}
+                    </button>
+                  ))}
+                </div>
+
+                {iletisimNeden === "diger" && (
+                  <textarea value={iletisimDiger} onChange={(e) => setIletisimDiger(e.target.value)} placeholder="Kısaca açıklayın…" rows={3}
+                    className="w-full mb-3 px-3.5 py-2.5 rounded-xl text-sm outline-none resize-none" style={{ border: `1px solid ${BORDER}`, color: INK }} />
+                )}
+
+                {iletisimHata && <p className="text-sm mb-3" style={{ color: RED }}>{iletisimHata}</p>}
+
+                <button onClick={iletisimGonder} disabled={iletisimGonderiliyor}
+                  className="w-full flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-full text-sm font-medium text-white transition-shadow disabled:opacity-60" style={{ background: BLUE }}>
+                  {iletisimGonderiliyor ? "Gönderiliyor…" : "Gönder"}
+                </button>
+              </>
+            )}
+          </Kart>
+        </div>
+      )}
     </div>
   );
 }
@@ -3693,6 +3844,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
   const [menuAcik, setMenuAcik] = useState(false);
   const [arama, setArama] = useState("");
   const [silinecekAna, setSilinecekAna] = useState(null); // şifresiyle onaylanmayı bekleyen Ana Kullanıcı (Yönetici) kaydı
+  const [mesajlar, setMesajlar] = useState({}); // giriş ekranındaki iletişim formundan gelen mesajlar
 
   useEffect(() => {
     if (!firebaseHazir) { setYukleniyor(false); setYuklemeHatasi("Firebase başlatılamadı."); return; }
@@ -3719,6 +3871,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
           setSahipSifre(v.sahipSifre || "");
           setTelegramKullaniciAdi(v.telegramKullaniciAdi || "");
           setAnaKullanicilar(v.anaKullanicilar || {});
+          setMesajlar(v.mesajlar || {});
           setYukleniyor(false);
           setYuklemeHatasi("");
         },
@@ -3736,6 +3889,16 @@ function ProgramSahibiPaneli({ cikisYap }) {
     () => Object.entries(anaKullanicilar).map(([id, a]) => ({ id, ...a })).sort((a, b) => (b.olusturmaZamani || 0) - (a.olusturmaZamani || 0)),
     [anaKullanicilar]
   );
+  const mesajListesi = useMemo(
+    () => Object.entries(mesajlar).map(([id, m]) => ({ id, ...m })).sort((a, b) => (b.zaman || 0) - (a.zaman || 0)),
+    [mesajlar]
+  );
+  const okunmamisMesajSayisi = useMemo(() => mesajListesi.filter((m) => !m.okundu).length, [mesajListesi]);
+  const mesajOkunduIsaretle = (id) => db.ref(yonetimYoluAl() + "/mesajlar/" + id + "/okundu").set(true);
+  const mesajSil = (id) => {
+    if (!window.confirm("Bu mesajı silmek istediğinize emin misiniz?")) return;
+    db.ref(yonetimYoluAl() + "/mesajlar/" + id).remove();
+  };
   const anaListesiFiltreli = useMemo(() => {
     const q = arama.trim().toLocaleLowerCase("tr");
     if (!q) return anaListesi;
@@ -3937,6 +4100,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
 
   const sahipTabs = [
     { id: "kullanicilar", label: "Ana Kullanıcılar", icon: IconUsers, color: BLUE },
+    { id: "mesajlar", label: okunmamisMesajSayisi > 0 ? `Mesajlar (${okunmamisMesajSayisi})` : "Mesajlar", icon: IconNote, color: GREEN },
     { id: "ayarlar", label: "Ayarlar", icon: IconID, color: PURPLE },
   ];
 
@@ -4119,6 +4283,52 @@ function ProgramSahibiPaneli({ cikisYap }) {
             </div>
           )}
 
+          {sahipTab === "mesajlar" && (
+            <div>
+              <Baslik title="Mesajlar" desc="Giriş ekranındaki 'İletişime Geçin' formunu dolduran kişilerin mesajları burada listelenir." />
+              {mesajListesi.length === 0 ? (
+                <Bos mesaj="Henüz bir mesaj yok" ipucu="Giriş ekranındaki formu dolduran olursa burada görünecek." />
+              ) : (
+                <div className="flex flex-col gap-2.5">
+                  {mesajListesi.map((m) => {
+                    const kimlik = ILETISIM_KIMLIK_SECENEKLERI.find((k) => k.id === m.kimlik);
+                    const neden = ILETISIM_NEDEN_SECENEKLERI.find((n) => n.id === m.neden);
+                    return (
+                      <Kart key={m.id} className="p-4" style={!m.okundu ? { borderLeft: `3px solid ${BLUE}` } : {}}>
+                        <div className="flex items-start justify-between gap-3 mb-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium">{m.ad || "İsim belirtilmedi"}</span>
+                              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full" style={{ background: `${BLUE}14`, color: BLUE }}>{kimlik ? kimlik.label : m.kimlik}</span>
+                              {!m.okundu && <span className="text-[11px] font-medium px-2 py-0.5 rounded-full" style={{ background: `${RED}14`, color: RED }}>Yeni</span>}
+                            </div>
+                            <p className="text-[11px] mt-0.5" style={{ color: SUBTLE }}>{tarihFormat(m.zaman)}</p>
+                          </div>
+                          <button onClick={() => mesajSil(m.id)} className="p-1.5 rounded-full hover:bg-gray-100 shrink-0" title="Mesajı sil">
+                            <IconTrash size={14} color={RED} />
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-sm mb-1.5">
+                          <IconPhone size={14} color={SUBTLE} />
+                          <a href={`tel:${m.telefon}`} className="font-medium hover:underline">{m.telefon}</a>
+                        </div>
+                        <p className="text-sm" style={{ color: INK }}>{neden ? neden.label : m.neden}</p>
+                        {m.neden === "diger" && m.digerAciklama && (
+                          <p className="text-sm mt-1 px-3 py-2 rounded-lg" style={{ background: BG, color: SUBTLE }}>{m.digerAciklama}</p>
+                        )}
+                        {!m.okundu && (
+                          <button onClick={() => mesajOkunduIsaretle(m.id)} className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium" style={{ background: `${GREEN}14`, color: GREEN }}>
+                            <IconCheck size={13} color={GREEN} />Okundu İşaretle
+                          </button>
+                        )}
+                      </Kart>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {sahipTab === "ayarlar" && (
             <div>
               <Baslik title="Ayarlar" desc="Patron giriş şifrenizi buradan değiştirebilirsiniz." />
@@ -4133,11 +4343,13 @@ function ProgramSahibiPaneli({ cikisYap }) {
               </Kart>
 
               <Kart className="mb-6 p-4 max-w-md">
-                <h2 className="font-display text-base font-medium mb-1">Telegram İletişim Butonu</h2>
+                <h2 className="font-display text-base font-medium mb-1">Telegram İletişim Kullanıcı Adı</h2>
                 <p className="text-xs mb-3" style={{ color: SUBTLE }}>
-                  Giriş ekranında bir "İletişime Geçin" butonu gösterilir; tıklanınca telefon numaranız
-                  hiç görünmeden, doğrudan buradaki Telegram kullanıcı adınızla sohbet açılır. Boş
-                  bırakırsanız buton hiç görünmez.{telegramKullaniciAdi && <> Şu anki: <span className="font-mono font-medium">@{telegramKullaniciAdi}</span></>}
+                  Giriş ekranındaki "İletişime Geçin" artık bir form olduğu için buradaki kullanıcı adı
+                  orada kullanılmaz — o mesajlar doğrudan "Mesajlar" sekmesine düşer. Bu kullanıcı adı
+                  yalnızca uygulama içindeki Premium kilit ekranlarında ve toplu aktarma gibi
+                  yerlerde (zaten giriş yapmış okullara) gösterilir. Boş bırakırsanız o butonlar hiç görünmez.
+                  {telegramKullaniciAdi && <> Şu anki: <span className="font-mono font-medium">@{telegramKullaniciAdi}</span></>}
                 </p>
                 <div className="flex items-center gap-2">
                   <GoogleInput type="text" value={yeniTelegramKullaniciAdi} onChange={(e) => setYeniTelegramKullaniciAdi(e.target.value)} placeholder="kullaniciadi (@ olmadan)" className="flex-1" onKeyDown={(e) => e.key === "Enter" && telegramKaydet()} />
