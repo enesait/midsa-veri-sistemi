@@ -2498,6 +2498,7 @@ const ISLEM_ETIKETLERI = {
   kocluklSiniflar: "Koçluk sınıfları",
   kocluklOgrenciler: "Koçluk öğrencileri",
   koclukNotlari: "Koçluk notları",
+  koclukGorusleri: "Koçluk görüşleri",
   ogretmenSifreleri: "Öğretmen şifreleri",
   dersProgrami: "Ders programı",
   sinifTemizligi: "Sınıf temizliği",
@@ -4628,6 +4629,13 @@ function StudentTracker() {
   // KoclukNotTakip) — Davranışlar sekmesindeki günlük limitli notlardan kasıtlı olarak ayrı bir
   // depodur, çünkü bu notlar Koçluk'un kendi öğrenci listesine (kocluklOgrenciler) bağlıdır.
   const [koclukNotlari, setKoclukNotlari] = useState({});
+  // "Görüş Bildir": Koçluk sayfasından öğretmenin belirli bir öğrenci için bıraktığı, veli girişinde
+  // "Akıllı Koçluk Önerileri" kartının altında öğretmen adıyla birlikte gösterilen görüş(ler).
+  // koclukNotlari'ndan farkı: o notlarda "kim yazdı" bilgisi veliye kasıtlı olarak gösterilmiyor,
+  // burada ise öğretmen adı görünür olması istenen ayrı bir özellik. Şekli:
+  // { [kocluklOgrenciId]: [ {id, metin, ogretmen, tarih, zaman} ] } — birden fazla öğretmen ya da
+  // aynı öğretmen farklı zamanlarda birden fazla görüş bırakabilir, en yeni en üstte gösterilir.
+  const [koclukGorusleri, setKoclukGorusleri] = useState({});
   // Ders İçi: tüm kayıtlı öğrencilere (kocluklOgrenciler gibi ayrı bir alt liste değil, doğrudan
   // students) uygulanan ödev takip / kitap kontrolü / derse katılım artı-eksi kayıtları. Her biri
   // { [tarihISO]: { [ders]: { [ogrenciId]: {durum, ekleyen, zaman} } } } şeklinde tutulur; böylece
@@ -4774,6 +4782,7 @@ function StudentTracker() {
             kocluklSiniflar: [],
             kocluklOgrenciler: [],
             koclukNotlari: {},
+            koclukGorusleri: {},
             dersIciDersler: DERS_ICI_VARSAYILAN_DERSLER,
             dersIciOdev: {},
             dersIciKitap: {},
@@ -4819,6 +4828,7 @@ function StudentTracker() {
           setKocluklSiniflar(bosVeri.kocluklSiniflar);
           setKocluklOgrenciler(bosVeri.kocluklOgrenciler);
           setKoclukNotlari(bosVeri.koclukNotlari);
+          setKoclukGorusleri(bosVeri.koclukGorusleri);
           setDersIciDersler(bosVeri.dersIciDersler);
           setDersIciOdev(bosVeri.dersIciOdev);
           setDersIciKitap(bosVeri.dersIciKitap);
@@ -4876,6 +4886,7 @@ function StudentTracker() {
       setKocluklSiniflar(data.kocluklSiniflar || []);
       setKocluklOgrenciler(data.kocluklOgrenciler || []);
       setKoclukNotlari(data.koclukNotlari || {});
+      setKoclukGorusleri(data.koclukGorusleri || {});
       setDersIciDersler(Array.isArray(data.dersIciDersler) && data.dersIciDersler.length > 0 ? data.dersIciDersler : DERS_ICI_VARSAYILAN_DERSLER);
       setDersIciOdev(data.dersIciOdev || {});
       setDersIciKitap(data.dersIciKitap || {});
@@ -4940,6 +4951,7 @@ function StudentTracker() {
   const updateKocluklSiniflar = useCallback((next) => { setKocluklSiniflar(next); saveKey("kocluklSiniflar", next); }, []);
   const updateKocluklOgrenciler = useCallback((next) => { setKocluklOgrenciler(next); saveKey("kocluklOgrenciler", next); }, []);
   const updateKoclukNotlari = useCallback((next) => { setKoclukNotlari(next); saveKey("koclukNotlari", next); }, []);
+  const updateKoclukGorusleri = useCallback((next) => { setKoclukGorusleri(next); saveKey("koclukGorusleri", next); }, []);
   const updateDersIciDersler = useCallback((next) => { setDersIciDersler(next); saveKey("dersIciDersler", next); }, []);
   const updateDersIciOdev = useCallback((next) => { setDersIciOdev(next); saveKey("dersIciOdev", next); }, []);
   const updateDersIciKitap = useCallback((next) => { setDersIciKitap(next); saveKey("dersIciKitap", next); }, []);
@@ -5058,7 +5070,7 @@ function StudentTracker() {
   if (rol === "veli") {
     return <VeliUygulama veliNo={veliNo} students={students} grades={grades} dersYoklama={dersYoklama} attendance={attendance}
       denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
-      soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari}
+      soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} koclukGorusleri={koclukGorusleri}
       dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim}
       davranisNotlari={davranisNotlari}
       konuTakip={konuTakip} updateKonuTakip={updateKonuTakip} updateKonuTakipKayit={updateKonuTakipKayit}
@@ -5110,7 +5122,7 @@ function StudentTracker() {
           {tab === "davranislar" && (plan === "premium" ? <Davranislar students={students} davranisNotlari={davranisNotlari} updateDavranisNotlari={updateDavranisNotlari} kullaniciAdi={kullaniciAdi} rol={rol} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} /> : <PremiumKilit baslik="Davranışlar" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "yoklama" && <Yoklama students={students} dersYoklama={dersYoklama} updateDersYoklama={updateDersYoklama} otoAyar={otoAyar} updateOtoAyar={updateOtoAyar} otoGecmis={otoGecmis} updateOtoGecmis={updateOtoGecmis} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "notlar" && <Notlar students={students} grades={grades} updateGrades={updateGrades} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
-          {tab === "kocluk" && <Kocluk kocluklSiniflar={kocluklSiniflar} updateKocluklSiniflar={updateKocluklSiniflar} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} students={students} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum} kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} kocDevam={kocDevam} updateKocDevam={updateKocDevam} koclukNotlari={koclukNotlari} updateKoclukNotlari={updateKoclukNotlari} kazanimListesi={kazanimListesi} updateKazanimListesi={updateKazanimListesi} koclukKazanimTakip={koclukKazanimTakip} updateKoclukKazanimTakip={updateKoclukKazanimTakip} plan={plan} kullaniciAdi={kullaniciAdi} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
+          {tab === "kocluk" && <Kocluk kocluklSiniflar={kocluklSiniflar} updateKocluklSiniflar={updateKocluklSiniflar} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} students={students} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum} kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} kocDevam={kocDevam} updateKocDevam={updateKocDevam} koclukNotlari={koclukNotlari} updateKoclukNotlari={updateKoclukNotlari} koclukGorusleri={koclukGorusleri} updateKoclukGorusleri={updateKoclukGorusleri} kazanimListesi={kazanimListesi} updateKazanimListesi={updateKazanimListesi} koclukKazanimTakip={koclukKazanimTakip} updateKoclukKazanimTakip={updateKoclukKazanimTakip} plan={plan} kullaniciAdi={kullaniciAdi} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "dersIci" && <DersIci students={students} siniflar={siniflar} dersIciDersler={dersIciDersler} updateDersIciDersler={updateDersIciDersler} dersIciOdev={dersIciOdev} updateDersIciOdev={updateDersIciOdev} dersIciKitap={dersIciKitap} updateDersIciKitap={updateDersIciKitap} dersIciKatilim={dersIciKatilim} updateDersIciKatilim={updateDersIciKatilim} dersIciDefter={dersIciDefter} updateDersIciDefter={updateDersIciDefter} dersIciOkumaKitabi={dersIciOkumaKitabi} updateDersIciOkumaKitabi={updateDersIciOkumaKitabi} kullaniciAdi={kullaniciAdi} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "denemeler" && <Denemeler students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} />}
           {tab === "optik" && (plan === "premium" ? <OptikOkuyucuSayfa students={students} updateStudents={updateStudents} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} siniflar={siniflar} /> : <PremiumKilit baslik="Optik Okuyucu" telegramKullaniciAdi={telegramKullaniciAdi} />)}
@@ -8289,7 +8301,7 @@ function SoruCozumTakip({ students, siniflar, kayitlar, updateKayitlar, tarih, s
 // mantığını kullanır — { [tarihISO]: { [koçlukÖğrenciId]: metin } } — ama artı/eksi yerine
 // SERBEST METİN tutar; herhangi bir karakter/harf sınırı YOKTUR (bilerek maxLength konmadı).
 // Girilen notlar Karne ekranında da (bkz. Karne bileşenindeki "Koçluk Notları" bölümü) gösterilir.
-function KoclukNotTakip({ students, siniflar, kayitlar, updateKayitlar, tarih, setTarih, sinifFiltre, setSinifFiltre, kullaniciAdi }) {
+function KoclukNotTakip({ students, siniflar, kayitlar, updateKayitlar, koclukGorusleri, updateKoclukGorusleri, tarih, setTarih, sinifFiltre, setSinifFiltre, kullaniciAdi }) {
   useEffect(() => {
     if ((!sinifFiltre || !siniflar.includes(sinifFiltre)) && siniflar.length) setSinifFiltre(siniflar[0]);
     if (!siniflar.length) setSinifFiltre("");
@@ -8317,6 +8329,25 @@ function KoclukNotTakip({ students, siniflar, kayitlar, updateKayitlar, tarih, s
   };
   const notluSayisi = useMemo(() => sinifOgrencileri.filter((s) => kayitMetni(gunKaydi[s.id]).trim()).length, [gunKaydi, sinifOgrencileri]);
 
+  // --- Görüş Bildir: koclukNotlari'ndaki tarih bazlı hızlı notlardan farklı olarak, veli girişinde
+  // "Akıllı Koçluk Önerileri" altında öğretmen adıyla birlikte gösterilen, biriken bir görüş listesi.
+  const [gorusOgrenci, setGorusOgrenci] = useState(null); // modalda görüş bildirilen öğrenci
+  const [gorusMetni, setGorusMetni] = useState("");
+  const gorusListesi = gorusOgrenci ? ((koclukGorusleri && koclukGorusleri[gorusOgrenci.id]) || []).slice().sort((a, b) => b.zaman - a.zaman) : [];
+  const gorusKaydet = () => {
+    const metin = gorusMetni.trim();
+    if (!metin || !gorusOgrenci) return;
+    const yeni = { id: uid(), metin, ogretmen: kullaniciAdi || "Öğretmen", tarih: todayISO(), zaman: Date.now() };
+    const mevcut = (koclukGorusleri && koclukGorusleri[gorusOgrenci.id]) || [];
+    updateKoclukGorusleri({ ...(koclukGorusleri || {}), [gorusOgrenci.id]: [...mevcut, yeni] });
+    setGorusMetni("");
+  };
+  const gorusSil = (gorusId) => {
+    if (!gorusOgrenci) return;
+    const mevcut = (koclukGorusleri && koclukGorusleri[gorusOgrenci.id]) || [];
+    updateKoclukGorusleri({ ...(koclukGorusleri || {}), [gorusOgrenci.id]: mevcut.filter((g) => g.id !== gorusId) });
+  };
+
   return (
     <div>
       <Baslik title="Not Al" desc="Sınıf ve tarih seçin; öğrenciyle ilgili almak istediğiniz notu yazın. Herhangi bir karakter sınırı yoktur — girdiğiniz notlar Karne ekranında da görünür." />
@@ -8336,6 +8367,7 @@ function KoclukNotTakip({ students, siniflar, kayitlar, updateKayitlar, tarih, s
             // bu eski notlara yazar bilgisini eklenebilsin diye, böyle bir not varsa buton metin
             // değişmese bile aktif kalır.
             const yazariEksikEskiNot = typeof kayitliDeger === "string" && kayitliDeger.trim();
+            const gorusSayisi = ((koclukGorusleri && koclukGorusleri[s.id]) || []).length;
             return (
               <div key={s.id} className="px-4 py-3" style={{ borderBottom: `1px solid ${BORDER}` }}>
                 <div className="flex items-center justify-between gap-3 mb-2">
@@ -8343,11 +8375,18 @@ function KoclukNotTakip({ students, siniflar, kayitlar, updateKayitlar, tarih, s
                     <p className="text-sm font-medium truncate">{s.ad}</p>
                     <p className="text-[11px]" style={{ color: SUBTLE }}>{s.sinif || "—"}</p>
                   </div>
-                  <button onClick={() => kaydet(s.id)} disabled={!degisti && !yazariEksikEskiNot}
-                    className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full shrink-0 disabled:opacity-40"
-                    style={{ color: "#00897B", border: "1px solid #00897B" }}>
-                    <IconCheck size={13} strokeWidth={3} color="#00897B" />Kaydet
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={() => { setGorusOgrenci(s); setGorusMetni(""); }}
+                      className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full"
+                      style={{ color: PURPLE, border: `1px solid ${PURPLE}` }}>
+                      <IconTarget size={13} color={PURPLE} />Görüş Bildir{gorusSayisi > 0 ? ` (${gorusSayisi})` : ""}
+                    </button>
+                    <button onClick={() => kaydet(s.id)} disabled={!degisti && !yazariEksikEskiNot}
+                      className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full disabled:opacity-40"
+                      style={{ color: "#00897B", border: "1px solid #00897B" }}>
+                      <IconCheck size={13} strokeWidth={3} color="#00897B" />Kaydet
+                    </button>
+                  </div>
                 </div>
                 {yazariEksikEskiNot && !degisti && (
                   <p className="text-[11px] mb-1.5" style={{ color: "#B45309" }}>Bu not, "kim yazdı" bilgisi eklenmeden önce girilmiş — adınızı eklemek için tekrar "Kaydet"e basabilirsiniz.</p>
@@ -8363,9 +8402,51 @@ function KoclukNotTakip({ students, siniflar, kayitlar, updateKayitlar, tarih, s
           })}
         </Kart>
       )}
+
+      {gorusOgrenci && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.5)" }}>
+          <div className="w-full max-w-lg rounded-2xl overflow-hidden flex flex-col" style={{ background: SURFACE, maxHeight: "88vh" }}>
+            <div className="flex items-center justify-between px-5 py-4 shrink-0" style={{ borderBottom: `1px solid ${BORDER}` }}>
+              <h3 className="font-display text-base font-medium flex items-center gap-2"><IconTarget size={18} color={PURPLE} />Görüş Bildir — {gorusOgrenci.ad}</h3>
+              <button onClick={() => setGorusOgrenci(null)} className="p-1"><IconX size={18} color={SUBTLE} /></button>
+            </div>
+            <div className="px-5 py-4 overflow-y-auto">
+              <p className="text-xs mb-3" style={{ color: SUBTLE }}>Buraya yazdığınız görüş, veli girişinde "Akıllı Koçluk Önerileri" alanının altında adınızla birlikte gösterilir.</p>
+              <textarea value={gorusMetni} onChange={(e) => setGorusMetni(e.target.value)} rows={3}
+                placeholder="Öğrencinin süreciyle ilgili görüşünüzü yazın…"
+                className="w-full bg-white border rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 resize-y mb-3"
+                style={{ borderColor: BORDER }}
+                onFocus={(e) => { e.target.style.boxShadow = `0 0 0 3px ${PURPLE}26`; e.target.style.borderColor = PURPLE; }}
+                onBlur={(e) => { e.target.style.boxShadow = "none"; e.target.style.borderColor = BORDER; }} />
+              <div className="flex justify-end mb-4">
+                <GoogleButton onClick={gorusKaydet} disabled={!gorusMetni.trim()}>
+                  <IconCheck size={15} color="#fff" />Görüşü Kaydet
+                </GoogleButton>
+              </div>
+              {gorusListesi.length > 0 && (
+                <>
+                  <p className="text-xs font-semibold tracking-wide mb-2" style={{ color: SUBTLE }}>DAHA ÖNCE BİLDİRİLEN GÖRÜŞLER</p>
+                  <div className="flex flex-col gap-2">
+                    {gorusListesi.map((g) => (
+                      <div key={g.id} className="rounded-xl px-3.5 py-2.5" style={{ background: BG }}>
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <span className="text-[11px] font-medium" style={{ color: PURPLE }}>{g.ogretmen} · {fmtDateTR(g.tarih)}</span>
+                          <button onClick={() => gorusSil(g.id)} className="p-0.5 shrink-0" title="Sil"><IconTrash size={13} color={RED} /></button>
+                        </div>
+                        <p className="text-sm whitespace-pre-wrap">{g.metin}</p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 function KoclukYonetim({ siniflar, updateSiniflar, ogrenciler, updateOgrenciler, students = [], plan, kullaniciAdi }) {
   const [yeniSinif, setYeniSinif] = useState("");
@@ -8571,7 +8652,7 @@ function KoclukYonetim({ siniflar, updateSiniflar, ogrenciler, updateOgrenciler,
   );
 }
 
-function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, updateKocluklOgrenciler, students, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, kocDevam, updateKocDevam, koclukNotlari, updateKoclukNotlari, kazanimListesi, updateKazanimListesi, koclukKazanimTakip, updateKoclukKazanimTakip, plan, kullaniciAdi, hizliGit, hizliGitTuketildi }) {
+function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, updateKocluklOgrenciler, students, soruCozum, updateSoruCozum, kitapKontrol, updateKitapKontrol, kocDevam, updateKocDevam, koclukNotlari, updateKoclukNotlari, koclukGorusleri, updateKoclukGorusleri, kazanimListesi, updateKazanimListesi, koclukKazanimTakip, updateKoclukKazanimTakip, plan, kullaniciAdi, hizliGit, hizliGitTuketildi }) {
   const [altSekme, setAltSekme] = useState("siniflar");
   const [tarih, setTarih] = useState(todayISO());
   const [sinifFiltre, setSinifFiltre] = useState(kocluklSiniflar[0] || "");
@@ -8633,6 +8714,7 @@ function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, upd
       )}
       {altSekme === "not" && (
         <KoclukNotTakip students={kocluklOgrenciler} siniflar={kocluklSiniflar} kayitlar={koclukNotlari || {}} updateKayitlar={updateKoclukNotlari}
+          koclukGorusleri={koclukGorusleri || {}} updateKoclukGorusleri={updateKoclukGorusleri}
           tarih={tarih} setTarih={setTarih} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre} kullaniciAdi={kullaniciAdi} />
       )}
       {altSekme === "kazanimEkle" && (
@@ -10979,7 +11061,7 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
 // --- Veli Girişi: öğretmenin tam uygulamasından tamamen ayrı, sabit tek ekranlı, salt-okunur bir
 // kabuk. Veli hiçbir veriyi değiştiremez; sadece kendi öğrencisinin no'sunu veya adını yazarak
 // arar ve o öğrenciye ait yoklama, not ve deneme bilgilerini görüntüler.
-function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, konuTakip, updateKonuTakip, updateKonuTakipKayit, kazanimListesi, baglanti, cikisYap }) {
+function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, konuTakip, updateKonuTakip, updateKonuTakipKayit, kazanimListesi, baglanti, cikisYap }) {
   // Veli varsayılan olarak öğrenci karnesini görür; "Konu Takibi" butonuna basınca evde
   // çalışılan/bitirilen konuları kendisi girip görebileceği ayrı bir ekrana, "Deneme Takibi"
   // butonuna basınca da okulda yapılan denemede hangi dersten hangi kazanımı yanlış yaptığını
@@ -11037,7 +11119,7 @@ function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denem
             </button>
             <VeliOgrenciGoster veliNo={veliNo} students={students} grades={grades} dersYoklama={dersYoklama} attendance={attendance}
               denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
-              soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari}
+              soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} koclukGorusleri={koclukGorusleri}
               dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim} davranisNotlari={davranisNotlari}
               kazanimListesi={kazanimListesi} konuTakip={konuTakip} updateKonuTakipKayit={updateKonuTakipKayit} />
           </>
@@ -12208,7 +12290,7 @@ function akilliKocOnerileriUret({ devamOzet, ogrenciDenemeleri, tumDenemelerOrta
   return oneriler;
 }
 
-function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, kazanimListesi, konuTakip, updateKonuTakipKayit }) {
+function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, kazanimListesi, konuTakip, updateKonuTakipKayit }) {
   const ogrenci = useMemo(() => students.find((s) => s.no === veliNo) || null, [students, veliNo]);
   const [denemeSecili, setDenemeSecili] = useState("");
   const denemeSeciliTumMu = denemeSecili === VELI_TUM_DENEMELER_ID;
@@ -12325,6 +12407,14 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
     });
     return liste.sort((a, b) => b.tarih.localeCompare(a.tarih));
   }, [kocluklKaydi, koclukNotlari]);
+
+  // Görüş Bildir: koclukNotlariKaydi'nin aksine burada öğretmen adı KASITLI olarak gösterilir —
+  // "Akıllı Koçluk Önerileri" kartının altında, hangi öğretmenin görüş bildirdiği belli olsun diye.
+  const koclukGorusleriKaydi = useMemo(() => {
+    if (!kocluklKaydi || !koclukGorusleri) return [];
+    const liste = (koclukGorusleri[kocluklKaydi.id] || []).filter((g) => g && g.metin && g.metin.trim());
+    return liste.slice().sort((a, b) => (b.zaman || 0) - (a.zaman || 0));
+  }, [kocluklKaydi, koclukGorusleri]);
 
   // Koçluk: veri girilmiş tüm tarihlerin listesi (devam / kitap kontrol / soru çözümden herhangi biri varsa),
   // veliye seçenek olarak sunulur; en yeniden en eskiye sıralı.
@@ -12655,6 +12745,21 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
           <button onClick={oneriYenile} className="text-xs font-semibold px-3.5 py-2 rounded-full flex items-center gap-1.5" style={{ color: BLUE, background: `${BLUE}14` }}>
             <IconSwap size={13} color={BLUE} />Farklı Öneriler Göster
           </button>
+        </Kart>
+      )}
+
+      {koclukGorusleriKaydi.length > 0 && (
+        <Kart className="p-5">
+          <h2 className="font-display text-base font-medium mb-1 flex items-center gap-2"><IconNote size={17} color={PURPLE} />Öğretmen Görüşü</h2>
+          <p className="text-[11px] mb-3" style={{ color: SUBTLE }}>Koçluk öğretmeninin süreçle ilgili bıraktığı görüşler</p>
+          <div className="flex flex-col gap-2.5">
+            {koclukGorusleriKaydi.map((g) => (
+              <div key={g.id} className="text-sm px-3.5 py-3 rounded-xl" style={{ background: `${PURPLE}0A`, border: `1px solid ${PURPLE}22` }}>
+                <p className="text-[11px] font-semibold mb-1" style={{ color: PURPLE }}>{g.ogretmen} · {fmtDateTR(g.tarih)}</p>
+                <p style={{ color: INK }}>{g.metin}</p>
+              </div>
+            ))}
+          </div>
         </Kart>
       )}
 
