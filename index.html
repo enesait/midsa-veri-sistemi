@@ -3938,6 +3938,17 @@ function YonetimPaneli({ ogretmenSifreleri, updateOgretmenSifreleri, veliSifreOn
 
 // PREMIUM KİLİT: Kısıtlı plandaki bir okulun tamamen kapalı bir modüle girdiğinde gördüğü ekran.
 // Basit ve tek amaçlı: kullanıcıyı bilgilendirir, panik yaratmaz, İletişime Geçin'e yönlendirir.
+// Telefon numarasını Telegram'ın t.me/+ÜlkeKodlu bağlantısına uygun biçime çevirir.
+// 0546... / 546... / +90 546... / 90546... hepsi 90546... olur (Türkiye varsayılır).
+function telefonuTelegramNumarasinaCevir(tel) {
+  let d = String(tel || "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.startsWith("00")) d = d.slice(2);
+  else if (d.startsWith("0")) d = "90" + d.slice(1);
+  else if (d.length === 10) d = "90" + d;
+  return d.length >= 11 ? d : "";
+}
+
 function PremiumKilit({ baslik, telegramKullaniciAdi }) {
   return (
     <div className="flex flex-col items-center justify-center text-center py-16 px-6">
@@ -4481,11 +4492,24 @@ function ProgramSahibiPaneli({ cikisYap }) {
                         {m.neden === "diger" && m.digerAciklama && (
                           <p className="text-sm mt-1 px-3 py-2 rounded-lg" style={{ background: BG, color: SUBTLE }}>{m.digerAciklama}</p>
                         )}
-                        {!m.okundu && (
-                          <button onClick={() => mesajOkunduIsaretle(m.id)} className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium" style={{ background: `${GREEN}14`, color: GREEN }}>
-                            <IconCheck size={13} color={GREEN} />Okundu İşaretle
+                        <div className="mt-3 flex items-center gap-2 flex-wrap">
+                          {!m.okundu && (
+                            <button onClick={() => mesajOkunduIsaretle(m.id)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium" style={{ background: `${GREEN}14`, color: GREEN }}>
+                              <IconCheck size={13} color={GREEN} />Okundu İşaretle
+                            </button>
+                          )}
+                          {telefonuTelegramNumarasinaCevir(m.telefon) && (
+                            <a href={`https://t.me/+${telefonuTelegramNumarasinaCevir(m.telefon)}`} target="_blank" rel="noopener noreferrer"
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+                              style={{ background: "#229ED914", color: "#229ED9" }}>
+                              Telegram'da Aç
+                            </a>
+                          )}
+                          <button onClick={() => { try { navigator.clipboard.writeText(m.telefon || ""); } catch (e) {} }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium" style={{ background: BG, color: SUBTLE }}>
+                            Numarayı Kopyala
                           </button>
-                        )}
+                        </div>
                       </Kart>
                     );
                   })}
@@ -4649,6 +4673,9 @@ function StudentTracker() {
   // konuTakip: { [ogrenciId]: [ {id, ders, konu, tarih, durum, girenRol, zaman} ] } — Veli, öğrencisi
   // için evde çalışılan/bitirilen konuları buradan kendisi girip takip edebilir.
   const [konuTakip, setKonuTakip] = useState({});
+  // Ödevler sekmesi: öğretmenin tanımladığı ödevler ve ödevlerde kullanılan (Sınıf Kitaplığı'ndan bağımsız) kitap listesi.
+  const [odevler, setOdevler] = useState({});
+  const [odevKitaplari, setOdevKitaplari] = useState({});
   // Koçluk'a özel "Kazanım Bankası": { [dersAdı]: [ {id, ad} ] } — öğretmen/yönetici derslerin
   // kazanımlarını önceden buraya tanımlar (öğrenciden bağımsız, ortak kütüphane).
   const [kazanimListesi, setKazanimListesi] = useState({});
@@ -4790,6 +4817,8 @@ function StudentTracker() {
             dersIciDefter: {},
             dersIciOkumaKitabi: {},
             konuTakip: {},
+            odevler: {},
+            odevKitaplari: {},
             kazanimListesi: {},
             koclukKazanimTakip: {},
             ogretmenSifreleri: [],
@@ -4836,6 +4865,8 @@ function StudentTracker() {
           setDersIciDefter(bosVeri.dersIciDefter);
           setDersIciOkumaKitabi(bosVeri.dersIciOkumaKitabi);
           setKonuTakip(bosVeri.konuTakip);
+          setOdevler(bosVeri.odevler);
+          setOdevKitaplari(bosVeri.odevKitaplari);
           setKazanimListesi(bosVeri.kazanimListesi);
           setKoclukKazanimTakip(bosVeri.koclukKazanimTakip);
           setOgretmenSifreleri(bosVeri.ogretmenSifreleri);
@@ -4894,6 +4925,8 @@ function StudentTracker() {
       setDersIciDefter(data.dersIciDefter || {});
       setDersIciOkumaKitabi(data.dersIciOkumaKitabi || {});
       setKonuTakip(data.konuTakip || {});
+      setOdevler(data.odevler || {});
+      setOdevKitaplari(data.odevKitaplari || {});
       setKazanimListesi(data.kazanimListesi || {});
       setKoclukKazanimTakip(data.koclukKazanimTakip || {});
       setOgretmenSifreleri(data.ogretmenSifreleri || []);
@@ -4959,6 +4992,8 @@ function StudentTracker() {
   const updateDersIciDefter = useCallback((next) => { setDersIciDefter(next); saveKey("dersIciDefter", next); }, []);
   const updateDersIciOkumaKitabi = useCallback((next) => { setDersIciOkumaKitabi(next); saveKey("dersIciOkumaKitabi", next); }, []);
   const updateKonuTakip = useCallback((next) => { setKonuTakip(next); saveKey("konuTakip", next); }, []);
+  const updateOdevler = useCallback((next) => { setOdevler(next); saveKey("odevler", next); }, []);
+  const updateOdevKitaplari = useCallback((next) => { setOdevKitaplari(next); saveKey("odevKitaplari", next); }, []);
   const updateKazanimListesi = useCallback((next) => { setKazanimListesi(next); saveKey("kazanimListesi", next); }, []);
   const updateKoclukKazanimTakip = useCallback((next) => { setKoclukKazanimTakip(next); saveKey("koclukKazanimTakip", next); }, []);
   // Veli girişinde "konuTakip" düğümünün TAMAMI yerine yalnızca ilgili öğrencinin ilgili dersine
@@ -5038,6 +5073,7 @@ function StudentTracker() {
     { id: "davranislar", label: "Davranışlar", icon: IconNote, color: "#F59E0B" },
     { id: "kocluk", label: "Koçluk", icon: IconTarget, color: "#00897B" },
     { id: "dersIci", label: "Ders İçi", icon: IconGrad, color: "#0EA5E9" },
+    { id: "odevler", label: "Ödevler", icon: IconBook, color: "#F97316" },
     { id: "karne", label: "Karne", icon: IconID, color: PURPLE },
     { id: "denemeler", label: "Denemeler", icon: IconChart, color: ORANGE },
     { id: "sinifTemizligi", label: "Sınıf Temizliği", icon: IconSparkles, color: "#14B8A6" },
@@ -5074,6 +5110,7 @@ function StudentTracker() {
       dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim}
       davranisNotlari={davranisNotlari}
       konuTakip={konuTakip} updateKonuTakip={updateKonuTakip} updateKonuTakipKayit={updateKonuTakipKayit}
+      odevler={odevler} odevKitaplari={odevKitaplari}
       kazanimListesi={kazanimListesi}
       baglanti={baglanti} cikisYap={cikisYap} />;
   }
@@ -5128,7 +5165,8 @@ function StudentTracker() {
           {tab === "optik" && (plan === "premium" ? <OptikOkuyucuSayfa students={students} updateStudents={updateStudents} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} siniflar={siniflar} /> : <PremiumKilit baslik="Optik Okuyucu" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "sinifTemizligi" && (plan === "premium" ? <SinifTemizligi sinifTemizligi={sinifTemizligi} updateSinifTemizligi={updateSinifTemizligi} /> : <PremiumKilit baslik="Sınıf Temizliği" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "sinifNobet" && <SinifNobet sinifNobet={sinifNobet} updateSinifNobet={updateSinifNobet} />}
-          {tab === "karne" && <Karne students={students} grades={grades} attendance={attendance} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim} dersIciDefter={dersIciDefter} dersIciOkumaKitabi={dersIciOkumaKitabi} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} konuTakip={konuTakip} kazanimListesi={kazanimListesi} setTab={setTab} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
+          {tab === "odevler" && <Odevler students={students} odevler={odevler} updateOdevler={updateOdevler} odevKitaplari={odevKitaplari} updateOdevKitaplari={updateOdevKitaplari} konuTakip={konuTakip} kullaniciAdi={kullaniciAdi} />}
+          {tab === "karne" && <Karne students={students} grades={grades} attendance={attendance} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim} dersIciDefter={dersIciDefter} dersIciOkumaKitabi={dersIciOkumaKitabi} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} konuTakip={konuTakip} odevler={odevler} kazanimListesi={kazanimListesi} setTab={setTab} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "sinifKitapligi" && <SinifKitapligi students={students} siniflar={siniflar} kayitlar={sinifKitapligi} updateKayitlar={updateSinifKitapligi} kitaplar={kitapKatalogu} updateKitaplar={updateKitapKatalogu} kullaniciAdi={kullaniciAdi} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "iletisim" && <Iletisim students={students} updateStudents={updateStudents} veliSifreOnek={veliSifreOnek} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "yonetim" && rol === "admin" && <YonetimPaneli ogretmenSifreleri={ogretmenSifreleri} updateOgretmenSifreleri={updateOgretmenSifreleri} veliSifreOnek={veliSifreOnek} updateVeliSifreOnek={updateVeliSifreOnek} plan={plan} anaId={anaId} />}
@@ -8307,28 +8345,6 @@ function KoclukNotTakip({ students, siniflar, kayitlar, updateKayitlar, koclukGo
     if (!siniflar.length) setSinifFiltre("");
   }, [siniflar]);
   const sinifOgrencileri = useMemo(() => students.filter((s) => s.sinif === sinifFiltre).slice().sort((a, b) => a.ad.localeCompare(b.ad, "tr")), [students, sinifFiltre]);
-  const gunKaydi = kayitlar[tarih] || {};
-  // Kayıtlı değer eski sürümlerde düz metin (string) olabilir, yeni sürümde {metin, ekleyen, zaman}
-  // nesnesi — ikisini de tek noktadan okumak için bu yardımcı kullanılır.
-  const kayitMetni = (deger) => (typeof deger === "string" ? deger : deger?.metin) || "";
-  // Her tuş vuruşunda Firebase'e yazmamak için metin önce burada (taslak olarak) tutulur, "Kaydet"e
-  // basılınca ya da tarih/sınıf değişince kayıtlı değere göre sıfırlanır.
-  const [taslaklar, setTaslaklar] = useState({});
-  useEffect(() => { setTaslaklar({}); }, [tarih, sinifFiltre]);
-  const metinAl = (studentId) => (taslaklar[studentId] !== undefined ? taslaklar[studentId] : kayitMetni(gunKaydi[studentId]));
-  const metinDegistir = (studentId, deger) => setTaslaklar((t) => ({ ...t, [studentId]: deger }));
-  const kaydet = (studentId) => {
-    const metin = metinAl(studentId).trim();
-    const guncelGun = { ...gunKaydi };
-    // Not kimin girdiğini (öğretmen adını) da saklıyoruz — Karne'de öğretmene gösterilir, veli
-    // görünümünde ise (bkz. VeliOgrenciGoster/koclukNotlariKaydi) bu alan hiç okunmadığı için görünmez.
-    if (metin) guncelGun[studentId] = { metin, ekleyen: kullaniciAdi || "Öğretmen", zaman: Date.now() };
-    else delete guncelGun[studentId];
-    updateKayitlar({ ...kayitlar, [tarih]: guncelGun });
-    setTaslaklar((t) => { const t2 = { ...t }; delete t2[studentId]; return t2; });
-  };
-  const notluSayisi = useMemo(() => sinifOgrencileri.filter((s) => kayitMetni(gunKaydi[s.id]).trim()).length, [gunKaydi, sinifOgrencileri]);
-
   // --- Görüş Bildir: koclukNotlari'ndaki tarih bazlı hızlı notlardan farklı olarak, veli girişinde
   // "Akıllı Koçluk Önerileri" altında öğretmen adıyla birlikte gösterilen, biriken bir görüş listesi.
   const [gorusOgrenci, setGorusOgrenci] = useState(null); // modalda görüş bildirilen öğrenci
@@ -8350,53 +8366,25 @@ function KoclukNotTakip({ students, siniflar, kayitlar, updateKayitlar, koclukGo
 
   return (
     <div>
-      <Baslik title="Not Al" desc="Sınıf ve tarih seçin; öğrenciyle ilgili almak istediğiniz notu yazın. Herhangi bir karakter sınırı yoktur — girdiğiniz notlar Karne ekranında da görünür." />
+      <Baslik title="Görüş Bildir" desc="Sınıfı seçin; öğrenci için Görüş Bildir butonuna basarak görüşünüzü yazın. Görüş, veli girişinde Öğretmen Görüşü alanında adınızla birlikte gösterilir." />
       <Kart className="flex flex-wrap items-center gap-4 mb-6 p-4">
         <SinifSecici value={sinifFiltre} onChange={setSinifFiltre} hepsi={false} siniflar={siniflar} className="sm:w-40" />
-        <GoogleInput type="date" value={tarih} onChange={(e) => setTarih(e.target.value)} />
-        <span className="text-xs font-medium ml-auto" style={{ color: "#00897B" }}>{notluSayisi} öğrenciye not girildi</span>
       </Kart>
       {siniflar.length === 0 ? <Bos mesaj="Henüz koçluk sınıfı oluşturulmadı" ipucu='Önce "Sınıf & Öğrenci" sekmesinden bir sınıf oluşturun.' /> : sinifOgrencileri.length === 0 ? <Bos mesaj="Bu sınıfta öğrenci yok" ipucu='Önce "Sınıf & Öğrenci" sekmesinden öğrenci ekleyin.' /> : (
         <Kart>
           {sinifOgrencileri.map((s) => {
-            const metin = metinAl(s.id);
-            const kayitliDeger = gunKaydi[s.id];
-            const degisti = metin !== kayitMetni(kayitliDeger);
-            // Bu özellik eklenmeden önce girilmiş notlar düz metin (string) olarak kaydedilmişti ve
-            // kimin yazdığı bilgisi hiç tutulmamıştı. Metni değiştirmeden sadece "Kaydet"e basarak da
-            // bu eski notlara yazar bilgisini eklenebilsin diye, böyle bir not varsa buton metin
-            // değişmese bile aktif kalır.
-            const yazariEksikEskiNot = typeof kayitliDeger === "string" && kayitliDeger.trim();
             const gorusSayisi = ((koclukGorusleri && koclukGorusleri[s.id]) || []).length;
             return (
-              <div key={s.id} className="px-4 py-3" style={{ borderBottom: `1px solid ${BORDER}` }}>
-                <div className="flex items-center justify-between gap-3 mb-2">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{s.ad}</p>
-                    <p className="text-[11px]" style={{ color: SUBTLE }}>{s.sinif || "—"}</p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button onClick={() => { setGorusOgrenci(s); setGorusMetni(""); }}
-                      className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full"
-                      style={{ color: PURPLE, border: `1px solid ${PURPLE}` }}>
-                      <IconTarget size={13} color={PURPLE} />Görüş Bildir{gorusSayisi > 0 ? ` (${gorusSayisi})` : ""}
-                    </button>
-                    <button onClick={() => kaydet(s.id)} disabled={!degisti && !yazariEksikEskiNot}
-                      className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full disabled:opacity-40"
-                      style={{ color: "#00897B", border: "1px solid #00897B" }}>
-                      <IconCheck size={13} strokeWidth={3} color="#00897B" />Kaydet
-                    </button>
-                  </div>
+              <div key={s.id} className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderBottom: `1px solid ${BORDER}` }}>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{s.ad}</p>
+                  <p className="text-[11px]" style={{ color: SUBTLE }}>{s.sinif || "—"}</p>
                 </div>
-                {yazariEksikEskiNot && !degisti && (
-                  <p className="text-[11px] mb-1.5" style={{ color: "#B45309" }}>Bu not, "kim yazdı" bilgisi eklenmeden önce girilmiş — adınızı eklemek için tekrar "Kaydet"e basabilirsiniz.</p>
-                )}
-                <textarea value={metin} onChange={(e) => metinDegistir(s.id, e.target.value)} rows={2}
-                  placeholder="Öğrenciyle ilgili not yazın…"
-                  className="w-full bg-white border rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 resize-y"
-                  style={{ borderColor: BORDER }}
-                  onFocus={(e) => { e.target.style.boxShadow = "0 0 0 3px #00897B26"; e.target.style.borderColor = "#00897B"; }}
-                  onBlur={(e) => { e.target.style.boxShadow = "none"; e.target.style.borderColor = BORDER; }} />
+                <button onClick={() => { setGorusOgrenci(s); setGorusMetni(""); }}
+                  className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full shrink-0"
+                  style={{ color: PURPLE, border: `1px solid ${PURPLE}` }}>
+                  <IconTarget size={13} color={PURPLE} />Görüş Bildir{gorusSayisi > 0 ? ` (${gorusSayisi})` : ""}
+                </button>
               </div>
             );
           })}
@@ -8672,7 +8660,7 @@ function Kocluk({ kocluklSiniflar, updateKocluklSiniflar, kocluklOgrenciler, upd
     { id: "devam", label: "Devam Durumu", icon: IconCalendar },
     { id: "soru", label: "Soru Çözüm", icon: IconTarget },
     { id: "kitap", label: "Kitap Kontrol", icon: IconBook },
-    { id: "not", label: "Not Al", icon: IconNote },
+    { id: "not", label: "Görüş Bildir", icon: IconNote },
     { id: "kazanimEkle", label: "Kazanım Ekle", icon: IconPlus },
   ];
   return (
@@ -9741,7 +9729,7 @@ function Notlar({ students, grades, updateGrades, hizliGit, hizliGitTuketildi })
 
 const VELI_TUM_DENEME_ID = "__VELI_TUM__";
 
-function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, dersIciOdev, dersIciKitap, dersIciKatilim, dersIciDefter, dersIciOkumaKitabi, davranisUyarilari, updateDavranisUyarilari, davranisNotlari, konuTakip, kazanimListesi, setTab, hizliGit, hizliGitTuketildi }) {
+function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, dersIciOdev, dersIciKitap, dersIciKatilim, dersIciDefter, dersIciOkumaKitabi, davranisUyarilari, updateDavranisUyarilari, davranisNotlari, konuTakip, odevler, kazanimListesi, setTab, hizliGit, hizliGitTuketildi }) {
   const [noGiris, setNoGiris] = useState("");
   const [ogrenci, setOgrenci] = useState(null);
   const [hata, setHata] = useState("");
@@ -10807,6 +10795,9 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
             </Kart>
           )}
 
+          <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconNote size={17} color={PURPLE} />Ödev Özeti</h2>
+          <OdevOzetKarti key={ogrenci.id} ogrenci={ogrenci} odevler={odevler} konuTakip={konuTakip} baslikGoster={false} />
+
           <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconBook size={17} color={BLUE} />Konu Takibi (Veli Girişi)</h2>
           <KarneKonuTakip ogrenci={ogrenci} kazanimListesi={kazanimListesi} konuTakip={konuTakip} />
 
@@ -11061,13 +11052,19 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
 // --- Veli Girişi: öğretmenin tam uygulamasından tamamen ayrı, sabit tek ekranlı, salt-okunur bir
 // kabuk. Veli hiçbir veriyi değiştiremez; sadece kendi öğrencisinin no'sunu veya adını yazarak
 // arar ve o öğrenciye ait yoklama, not ve deneme bilgilerini görüntüler.
-function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, konuTakip, updateKonuTakip, updateKonuTakipKayit, kazanimListesi, baglanti, cikisYap }) {
+function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, konuTakip, updateKonuTakip, updateKonuTakipKayit, odevler, odevKitaplari, kazanimListesi, baglanti, cikisYap }) {
   // Veli varsayılan olarak öğrenci karnesini görür; "Konu Takibi" butonuna basınca evde
   // çalışılan/bitirilen konuları kendisi girip görebileceği ayrı bir ekrana, "Deneme Takibi"
   // butonuna basınca da okulda yapılan denemede hangi dersten hangi kazanımı yanlış yaptığını
   // (öğretmenin Koçluk > Kazanım Bankası'ndan eklediği liste üzerinden) işaretleyebileceği ayrı
   // bir ekrana geçer.
-  const [gorunum, setGorunum] = useState("karne"); // "karne" | "konuTakip" | "denemeTakip"
+  const [gorunum, setGorunum] = useState("karne"); // "karne" | "konuTakip" | "denemeTakip" | "odevler"
+  const veliOgrenci = useMemo(() => students.find((s) => s.no === veliNo) || null, [students, veliNo]);
+  const bekleyenOdevSayisi = useMemo(() => {
+    if (!veliOgrenci) return 0;
+    const tamamlar = odevTamamOku(konuTakip, veliOgrenci.id);
+    return odevOgrenciListesi(odevler, veliOgrenci).filter((o) => !tamamlar[o.id]).length;
+  }, [odevler, konuTakip, veliOgrenci]);
   return (
     <div className="min-h-screen w-full" style={{ background: BG, color: INK }}>
       <header className="sticky top-0 z-30 flex items-center gap-3 px-4 sm:px-6 py-3 border-b" style={{ background: SURFACE, borderColor: BORDER }}>
@@ -11085,6 +11082,22 @@ function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denem
       <main className="flex-1 min-w-0 px-4 sm:px-8 py-6 sm:py-8 max-w-2xl mx-auto">
         {gorunum === "karne" ? (
           <>
+            <button onClick={() => setGorunum("odevler")}
+              className="mat-card mat-card-hover w-full flex items-center gap-4 p-5 rounded-3xl mb-6 text-left relative overflow-hidden"
+              style={{ background: `linear-gradient(135deg, ${PURPLE}, ${BLUE})`, border: "none" }}>
+              <span className="absolute -right-6 -top-10 w-32 h-32 rounded-full" style={{ background: "rgba(255,255,255,0.10)" }} />
+              <span className="absolute -right-2 -bottom-12 w-24 h-24 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
+              <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 relative" style={{ background: "rgba(255,255,255,0.22)" }}>
+                <IconNote size={22} color="#fff" />
+              </div>
+              <div className="min-w-0 relative">
+                <p className="font-display text-sm font-bold tracking-wide" style={{ color: "#fff" }}>ÖDEVLERİM</p>
+                <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.88)" }}>{bekleyenOdevSayisi > 0 ? `${bekleyenOdevSayisi} bekleyen ödevin var` : "Ödevlerini gör ve tamamlandı olarak işaretle"}</p>
+              </div>
+              <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 relative" style={{ marginLeft: "auto", background: "rgba(255,255,255,0.22)" }}>
+                <IconChevronRight size={16} color="#fff" />
+              </span>
+            </button>
             <button onClick={() => setGorunum("konuTakip")}
               className="mat-card mat-card-hover w-full flex items-center gap-4 p-5 rounded-3xl mb-6 text-left relative overflow-hidden"
               style={{ background: `linear-gradient(135deg, ${BLUE}, ${GREEN})`, border: "none" }}>
@@ -11121,8 +11134,13 @@ function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denem
               denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
               soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} koclukGorusleri={koclukGorusleri}
               dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim} davranisNotlari={davranisNotlari}
-              kazanimListesi={kazanimListesi} konuTakip={konuTakip} updateKonuTakipKayit={updateKonuTakipKayit} />
+              kazanimListesi={kazanimListesi} konuTakip={konuTakip} updateKonuTakipKayit={updateKonuTakipKayit}
+              odevler={odevler} onOdevlereGit={() => setGorunum("odevler")} />
           </>
+        ) : gorunum === "odevler" ? (
+          <VeliOdevler veliNo={veliNo} students={students} odevler={odevler} odevKitaplari={odevKitaplari}
+            konuTakip={konuTakip} updateKonuTakipKayit={updateKonuTakipKayit}
+            onGeri={() => setGorunum("karne")} />
         ) : gorunum === "konuTakip" ? (
           <VeliKonuTakip veliNo={veliNo} students={students} kazanimListesi={kazanimListesi}
             konuTakip={konuTakip} updateKonuTakipKayit={updateKonuTakipKayit}
@@ -12290,7 +12308,7 @@ function akilliKocOnerileriUret({ devamOzet, ogrenciDenemeleri, tumDenemelerOrta
   return oneriler;
 }
 
-function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, kazanimListesi, konuTakip, updateKonuTakipKayit }) {
+function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, kazanimListesi, konuTakip, updateKonuTakipKayit, odevler, onOdevlereGit }) {
   const ogrenci = useMemo(() => students.find((s) => s.no === veliNo) || null, [students, veliNo]);
   const [denemeSecili, setDenemeSecili] = useState("");
   const denemeSeciliTumMu = denemeSecili === VELI_TUM_DENEMELER_ID;
@@ -12395,26 +12413,25 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
     return { devamArti, devamEksi, kitapArti, kitapEksi, soruYapti, soruYapmadi };
   }, [kocluklKaydi, kocDevam, kitapKontrol, soruCozum]);
 
-  // Koçluk notları — veli görünümünde notun METNİ ve TARİHİ gösterilir, notu KİMİN yazdığı (ekleyen)
-  // bilerek gösterilmez; bu alan zaten aşağıda hiç okunmuyor.
-  const koclukNotlariKaydi = useMemo(() => {
-    if (!kocluklKaydi || !koclukNotlari) return [];
-    const liste = [];
-    Object.keys(koclukNotlari).forEach((t) => {
-      const kayit = koclukNotlari[t]?.[kocluklKaydi.id];
-      const metin = typeof kayit === "string" ? kayit : kayit?.metin;
-      if (metin && metin.trim()) liste.push({ tarih: t, metin });
-    });
-    return liste.sort((a, b) => b.tarih.localeCompare(a.tarih));
-  }, [kocluklKaydi, koclukNotlari]);
-
-  // Görüş Bildir: koclukNotlariKaydi'nin aksine burada öğretmen adı KASITLI olarak gösterilir —
+  // Görüş Bildir: burada öğretmen adı KASITLI olarak gösterilir —
   // "Akıllı Koçluk Önerileri" kartının altında, hangi öğretmenin görüş bildirdiği belli olsun diye.
   const koclukGorusleriKaydi = useMemo(() => {
     if (!kocluklKaydi || !koclukGorusleri) return [];
     const liste = (koclukGorusleri[kocluklKaydi.id] || []).filter((g) => g && g.metin && g.metin.trim());
     return liste.slice().sort((a, b) => (b.zaman || 0) - (a.zaman || 0));
   }, [kocluklKaydi, koclukGorusleri]);
+
+  // Öğretmen Görüşü: Davranışlar kartındaki gibi "Tüm Notlar" ya da tek bir tarih seçilebilir.
+  const gorusTarihleri = useMemo(() => {
+    const set = new Set();
+    koclukGorusleriKaydi.forEach((g) => { if (g.tarih) set.add(g.tarih); });
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [koclukGorusleriKaydi]);
+  const [gorusTarihSecili, setGorusTarihSecili] = useState(VELI_DAVRANIS_TUM_ID);
+  useEffect(() => {
+    if (gorusTarihSecili !== VELI_DAVRANIS_TUM_ID && !gorusTarihleri.includes(gorusTarihSecili)) setGorusTarihSecili(VELI_DAVRANIS_TUM_ID);
+  }, [gorusTarihleri]);
+  const gorusSeciliListe = gorusTarihSecili === VELI_DAVRANIS_TUM_ID ? koclukGorusleriKaydi : koclukGorusleriKaydi.filter((g) => g.tarih === gorusTarihSecili);
 
   // Koçluk: veri girilmiş tüm tarihlerin listesi (devam / kitap kontrol / soru çözümden herhangi biri varsa),
   // veliye seçenek olarak sunulur; en yeniden en eskiye sıralı.
@@ -12752,8 +12769,12 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
         <Kart className="p-5">
           <h2 className="font-display text-base font-medium mb-1 flex items-center gap-2"><IconNote size={17} color={PURPLE} />Öğretmen Görüşü</h2>
           <p className="text-[11px] mb-3" style={{ color: SUBTLE }}>Koçluk öğretmeninin süreçle ilgili bıraktığı görüşler</p>
+          <GoogleSelect value={gorusTarihSecili} onChange={(e) => setGorusTarihSecili(e.target.value)} className="w-full mb-4">
+            <option value={VELI_DAVRANIS_TUM_ID}>Tüm Notlar</option>
+            {gorusTarihleri.map((t) => <option key={t} value={t}>{fmtDateTR(t)}</option>)}
+          </GoogleSelect>
           <div className="flex flex-col gap-2.5">
-            {koclukGorusleriKaydi.map((g) => (
+            {gorusSeciliListe.map((g) => (
               <div key={g.id} className="text-sm px-3.5 py-3 rounded-xl" style={{ background: `${PURPLE}0A`, border: `1px solid ${PURPLE}22` }}>
                 <p className="text-[11px] font-semibold mb-1" style={{ color: PURPLE }}>{g.ogretmen} · {fmtDateTR(g.tarih)}</p>
                 <p style={{ color: INK }}>{g.metin}</p>
@@ -13041,20 +13062,768 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
           )}
         </Kart>
       )}
+    </div>
+  );
+}
 
-      {kocluklKaydi && koclukNotlariKaydi.length > 0 && (
-        <Kart className="p-5">
-          <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconNote size={17} color="#00897B" />Koçluk Notları</h2>
-          <div className="flex flex-col gap-3">
-            {koclukNotlariKaydi.map((n) => (
-              <div key={n.tarih} className="flex items-start gap-3 pb-3" style={{ borderBottom: `1px solid ${BORDER}` }}>
-                <span className="text-xs font-medium px-2.5 py-1 rounded-full shrink-0" style={{ color: "#00897B", background: "#00897B14" }}>{fmtDateTR(n.tarih)}</span>
-                <p className="text-sm flex-1 min-w-0 whitespace-pre-wrap">{n.metin}</p>
-              </div>
-            ))}
+// =================================================================================================
+// ÖDEVLER: öğretmen ödev tanımlar (başlık, teslim tarihi, ders, konu, kaynak kitap + sayfa aralığı,
+// atama hedefi: tüm öğrenciler / seçili sınıflar / seçili öğrenciler). Öğrenci (veli girişi)
+// "Ödevlerim" ekranında ödevlerini görür ve "Tamamlandı" olarak KENDİSİ işaretler.
+// Veri modeli:
+//   odevler       = { [odevId]: { id, baslik, aciklama, sonTarih, ders, konu, kaynakId, kaynakAd,
+//                                 sayfaBas, sayfaSon, hedef: { tur, siniflar?, ogrenciIds? }, ... } }
+//   odevKitaplari = { [kitapId]: { id, ad, ders, kapak (küçültülmüş resim), zaman } }
+//                   — "Sınıf Kitaplığı"ndan bağımsız, sadece ödevlerde kullanılan kitap listesi.
+//   Tamamlama     = konuTakip[ogrenciId]["__odevTamam__"] = { [odevId]: { zaman, tarih } }
+//                   (veli için zaten yazma izni olan konuTakip/{ogrenciId} alt yolu kullanılır)
+// =================================================================================================
+const ODEV_TAMAM_ANAHTARI = "__odevTamam__";
+const ODEV_DERSLERI = [...DERSLER, "Diğer"];
+
+function odevTamamOku(konuTakip, ogrenciId) {
+  return (konuTakip && konuTakip[ogrenciId] && konuTakip[ogrenciId][ODEV_TAMAM_ANAHTARI]) || {};
+}
+function odevHedefOgrenciler(odev, students) {
+  const h = odev.hedef || {};
+  if (h.tur === "sinif") { const set = new Set(h.siniflar || []); return students.filter((s) => set.has(s.sinif)); }
+  if (h.tur === "secili") { const set = new Set(h.ogrenciIds || []); return students.filter((s) => set.has(s.id)); }
+  return students;
+}
+function odevHedefEtiketi(odev, students) {
+  const h = odev.hedef || {};
+  if (h.tur === "sinif") return (h.siniflar || []).join(", ") + " sınıfı";
+  if (h.tur === "secili") return `${(h.ogrenciIds || []).length} seçili öğrenci`;
+  return "Tüm öğrenciler";
+}
+function odevGunFarki(iso) {
+  if (!iso) return 0;
+  const [y, m, d] = iso.split("-").map(Number);
+  const hedef = new Date(y, m - 1, d);
+  const bugun = new Date(); bugun.setHours(0, 0, 0, 0);
+  return Math.round((hedef - bugun) / 86400000);
+}
+// Son tarihe göre durum rozeti: geçti (kırmızı), bugün/yarın (turuncu), yakın (sarı), var (nötr).
+function odevSonDurum(sonTarih) {
+  const f = odevGunFarki(sonTarih);
+  if (f < 0) return { tip: "gecti", etiket: `${-f} gün geçti`, renk: RED };
+  if (f === 0) return { tip: "bugun", etiket: "Bugün son gün", renk: ORANGE };
+  if (f === 1) return { tip: "yarin", etiket: "Yarın son gün", renk: ORANGE };
+  if (f <= 3) return { tip: "yakin", etiket: `${f} gün kaldı`, renk: YELLOW };
+  return { tip: "var", etiket: `${f} gün kaldı`, renk: SUBTLE };
+}
+function odevSayfaMetni(o) {
+  if (o.sayfaBas && o.sayfaSon) return `Sayfa ${o.sayfaBas} – ${o.sayfaSon}`;
+  if (o.sayfaBas) return `Sayfa ${o.sayfaBas}`;
+  return "";
+}
+// Seçilen fotoğrafı ödev kitap listesinde saklanabilecek kadar küçültür (Firebase'e ağır resim yazılmasın).
+function odevResmiKucult(dosya, maxGenislik = 180) {
+  return new Promise((resolve, reject) => {
+    const okuyucu = new FileReader();
+    okuyucu.onerror = () => reject(new Error("Dosya okunamadı"));
+    okuyucu.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Resim açılamadı"));
+      img.onload = () => {
+        const oran = Math.min(1, maxGenislik / img.width);
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(img.width * oran));
+        c.height = Math.max(1, Math.round(img.height * oran));
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL("image/jpeg", 0.72));
+      };
+      img.src = okuyucu.result;
+    };
+    okuyucu.readAsDataURL(dosya);
+  });
+}
+
+// Ders seçici: "Diğer" seçilirse dersin adı elle yazılır; kaydedilen değer yazılan addır.
+function OdevDersSecici({ value, onChange }) {
+  const ozel = !!value && !DERSLER.includes(value);
+  const [digerModu, setDigerModu] = useState(ozel);
+  useEffect(() => { if (ozel) setDigerModu(true); }, [value]);
+  const secim = digerModu ? "Diğer" : (value || "");
+  const manuel = ozel && value !== "Diğer" ? value : "";
+  return (
+    <div className="flex flex-col gap-2">
+      <GoogleSelect value={secim} onChange={(e) => { const v = e.target.value; if (v === "Diğer") { setDigerModu(true); onChange("Diğer"); } else { setDigerModu(false); onChange(v); } }} className="w-full">
+        <option value="">Ders seçin</option>
+        {DERSLER.map((d) => <option key={d} value={d}>{d}</option>)}
+        <option value="Diğer">+ Diğer</option>
+      </GoogleSelect>
+      {digerModu && <GoogleInput value={manuel} onChange={(e) => onChange(e.target.value.trim() === "" ? "Diğer" : e.target.value)} placeholder="Dersin adını yazın" className="w-full" autoFocus />}
+    </div>
+  );
+}
+
+function OdevKapak({ kapak, boyut = 44 }) {
+  const yuk = Math.round(boyut * 1.35);
+  if (kapak) return <img src={kapak} alt="" className="shrink-0" style={{ width: boyut, height: yuk, objectFit: "cover", borderRadius: 8, boxShadow: "0 2px 8px -2px rgba(15,23,42,0.25)" }} />;
+  return (
+    <div className="shrink-0 flex items-center justify-center" style={{ width: boyut, height: yuk, borderRadius: 8, background: `${BLUE}14` }}>
+      <IconBook size={Math.round(boyut * 0.45)} color={BLUE} />
+    </div>
+  );
+}
+function OdevIlerleme({ yuzde, renk = GREEN }) {
+  return (
+    <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: `${renk}22` }}>
+      <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, yuzde))}%`, background: renk, transition: "width .3s" }} />
+    </div>
+  );
+}
+function OdevModal({ baslik, onKapat, children, alt, z = "z-50" }) {
+  return (
+    <div className={`fixed inset-0 ${z} flex items-end sm:items-center justify-center sm:p-4`} style={{ background: "rgba(0,0,0,0.5)" }}>
+      <div className="w-full max-w-lg rounded-t-3xl sm:rounded-2xl overflow-hidden flex flex-col" style={{ background: SURFACE, maxHeight: "92vh" }}>
+        <div className="flex items-center justify-between px-5 py-4 shrink-0" style={{ borderBottom: `1px solid ${BORDER}` }}>
+          <h3 className="font-display text-base font-medium">{baslik}</h3>
+          <button onClick={onKapat} className="p-1"><IconX size={18} color={SUBTLE} /></button>
+        </div>
+        <div className="px-5 py-4 overflow-y-auto flex-1">{children}</div>
+        {alt && <div className="px-5 py-3 shrink-0 flex justify-end gap-2" style={{ borderTop: `1px solid ${BORDER}` }}>{alt}</div>}
+      </div>
+    </div>
+  );
+}
+
+// --- Kitap Ekle: ad + ders + (isteğe bağlı) kapak fotoğrafı -------------------------------------
+function OdevKitapEkle({ onKaydet, onKapat }) {
+  const [ad, setAd] = useState("");
+  const [ders, setDers] = useState("");
+  const [kapak, setKapak] = useState("");
+  const [yukleniyor, setYukleniyor] = useState(false);
+  const dosyaSec = async (e) => {
+    const dosya = e.target.files && e.target.files[0];
+    if (!dosya) return;
+    setYukleniyor(true);
+    try { setKapak(await odevResmiKucult(dosya)); } catch (err) { window.alert("Resim yüklenemedi, başka bir fotoğraf deneyin."); }
+    setYukleniyor(false);
+    e.target.value = "";
+  };
+  const kaydet = () => {
+    if (!ad.trim()) return;
+    onKaydet({ id: "kt_" + uid(), ad: ad.trim(), ders: ders.trim(), kapak, zaman: Date.now() });
+  };
+  return (
+    <OdevModal baslik="Kitap Ekle" onKapat={onKapat} z="z-[70]"
+      alt={<><GoogleButton variant="outline" onClick={onKapat}>İptal</GoogleButton><GoogleButton onClick={kaydet} disabled={!ad.trim() || yukleniyor}><IconCheck size={15} color="#fff" />Kitabı Kaydet</GoogleButton></>}>
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-4">
+          <OdevKapak kapak={kapak} boyut={64} />
+          <div className="flex flex-col gap-1.5">
+            <label className="flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full cursor-pointer" style={{ color: BLUE, background: `${BLUE}14` }}>
+              <IconCamera size={14} color={BLUE} />{yukleniyor ? "Yükleniyor…" : kapak ? "Kapağı Değiştir" : "Kapak Fotoğrafı Ekle"}
+              <input type="file" accept="image/*" className="hidden" onChange={dosyaSec} />
+            </label>
+            {kapak && <button onClick={() => setKapak("")} className="text-[11px] text-left px-1" style={{ color: RED }}>Kapağı kaldır</button>}
+            <p className="text-[11px]" style={{ color: SUBTLE }}>İsteğe bağlı. Öğrenci kitabı kapağından tanır.</p>
           </div>
+        </div>
+        <div>
+          <label className="text-xs font-semibold mb-1.5 block" style={{ color: SUBTLE }}>KİTAP ADI *</label>
+          <GoogleInput value={ad} onChange={(e) => setAd(e.target.value)} placeholder="Örn. 345 TYT Fizik SB" className="w-full" />
+        </div>
+        <div>
+          <label className="text-xs font-semibold mb-1.5 block" style={{ color: SUBTLE }}>DERS (isteğe bağlı)</label>
+          <OdevDersSecici value={ders} onChange={setDers} />
+        </div>
+      </div>
+    </OdevModal>
+  );
+}
+
+// --- Kitap Seç: kapaklı kitap galerisi + arama -----------------------------------------------
+function OdevKitapSec({ kitaplar, seciliId, onSec, onKitapEkle, onKitapSil, onKapat }) {
+  const [ara, setAra] = useState("");
+  const [dersFiltre, setDersFiltre] = useState("");
+  const dersler = useMemo(() => Array.from(new Set(Object.values(kitaplar || {}).filter((k) => k && k.ders).map((k) => k.ders))).sort((a, b) => a.localeCompare(b, "tr")), [kitaplar]);
+  const liste = useMemo(() => Object.values(kitaplar || {}).filter((k) => k && k.id)
+    .filter((k) => !dersFiltre || k.ders === dersFiltre)
+    .filter((k) => !ara.trim() || k.ad.toLocaleLowerCase("tr").includes(ara.trim().toLocaleLowerCase("tr")))
+    .sort((a, b) => a.ad.localeCompare(b.ad, "tr")), [kitaplar, ara, dersFiltre]);
+  return (
+    <OdevModal baslik="Kitap Seç" onKapat={onKapat} z="z-[60]"
+      alt={<GoogleButton variant="outline" onClick={onKitapEkle}><IconPlus size={15} color={BLUE} />Yeni Kitap Ekle</GoogleButton>}>
+      <div className="flex gap-2 mb-3">
+        <GoogleInput value={ara} onChange={(e) => setAra(e.target.value)} placeholder="Kitap ara…" className="flex-1 min-w-0" />
+        {dersler.length > 0 && (
+          <GoogleSelect value={dersFiltre} onChange={(e) => setDersFiltre(e.target.value)} className="w-40">
+            <option value="">Tüm Dersler</option>
+            {dersler.map((d) => <option key={d} value={d}>{d}</option>)}
+          </GoogleSelect>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-2.5">
+        <button onClick={() => onSec(null)} className="rounded-2xl p-3 flex flex-col items-center justify-center gap-2 text-center"
+          style={{ border: `2px solid ${!seciliId ? BLUE : BORDER}`, background: !seciliId ? `${BLUE}0F` : SURFACE, minHeight: 140 }}>
+          <IconX size={22} color={SUBTLE} />
+          <span className="text-xs font-semibold">Kaynak yok</span>
+        </button>
+        {liste.map((k) => (
+          <div key={k.id} className="relative">
+            <button onClick={() => onSec(k)} className="w-full rounded-2xl p-3 flex flex-col items-center gap-2 text-center h-full"
+              style={{ border: `2px solid ${seciliId === k.id ? BLUE : BORDER}`, background: seciliId === k.id ? `${BLUE}0F` : SURFACE }}>
+              <OdevKapak kapak={k.kapak} boyut={56} />
+              <span className="text-xs font-semibold leading-tight">{k.ad}</span>
+              {k.ders && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ color: BLUE, background: `${BLUE}14` }}>{k.ders}</span>}
+            </button>
+            <button onClick={() => onKitapSil(k)} title="Kitabı listeden sil" className="absolute top-1.5 right-1.5 p-1 rounded-full" style={{ background: SURFACE }}>
+              <IconTrash size={12} color={RED} />
+            </button>
+          </div>
+        ))}
+      </div>
+      {liste.length === 0 && <p className="text-sm text-center mt-6" style={{ color: SUBTLE }}>{ara.trim() || dersFiltre ? "Aramanıza uyan kitap yok." : "Henüz kitap eklenmedi. Aşağıdan yeni kitap ekleyin."}</p>}
+    </OdevModal>
+  );
+}
+
+// --- Ödev oluştur / düzenle -------------------------------------------------------------------
+function OdevFormu({ mevcut, students, siniflar, kitaplar, updateKitaplar, kullaniciAdi, onKaydet, onKapat }) {
+  const varsayilanTarih = () => { const d = new Date(); d.setDate(d.getDate() + 7); return toISOLocal(d); };
+  const [baslik, setBaslik] = useState(mevcut?.baslik || "");
+  const [aciklama, setAciklama] = useState(mevcut?.aciklama || "");
+  const [sonTarih, setSonTarih] = useState(mevcut?.sonTarih || varsayilanTarih());
+  const [ders, setDers] = useState(mevcut?.ders || "");
+  const [konu, setKonu] = useState(mevcut?.konu || "");
+  const [kaynakId, setKaynakId] = useState(mevcut?.kaynakId || "");
+  const [kaynakAd, setKaynakAd] = useState(mevcut?.kaynakAd || "");
+  const [sayfaBas, setSayfaBas] = useState(mevcut?.sayfaBas || "");
+  const [sayfaSon, setSayfaSon] = useState(mevcut?.sayfaSon || "");
+  const [hedefTur, setHedefTur] = useState(mevcut?.hedef?.tur || "tumu");
+  const [hedefSiniflar, setHedefSiniflar] = useState(mevcut?.hedef?.siniflar || []);
+  const [hedefOgrenciler, setHedefOgrenciler] = useState(mevcut?.hedef?.ogrenciIds || []);
+  const [ogrAra, setOgrAra] = useState("");
+  const [ogrSinif, setOgrSinif] = useState("");
+  const [seciciAcik, setSeciciAcik] = useState(false);
+  const [kitapEkleAcik, setKitapEkleAcik] = useState(false);
+
+  const kaynakKitap = kaynakId ? (kitaplar || {})[kaynakId] : null;
+  const gorunenOgrenciler = useMemo(() => students
+    .filter((s) => (!ogrSinif || s.sinif === ogrSinif) && (!ogrAra.trim() || (s.ad + " " + (s.no || "")).toLocaleLowerCase("tr").includes(ogrAra.trim().toLocaleLowerCase("tr"))))
+    .slice().sort((a, b) => a.ad.localeCompare(b.ad, "tr")), [students, ogrSinif, ogrAra]);
+
+  const toggleSinif = (sn) => setHedefSiniflar((l) => (l.includes(sn) ? l.filter((x) => x !== sn) : [...l, sn]));
+  const toggleOgrenci = (id) => setHedefOgrenciler((l) => (l.includes(id) ? l.filter((x) => x !== id) : [...l, id]));
+  const gorunenleriSec = () => setHedefOgrenciler((l) => Array.from(new Set([...l, ...gorunenOgrenciler.map((s) => s.id)])));
+  const gorunenleriTemizle = () => { const set = new Set(gorunenOgrenciler.map((s) => s.id)); setHedefOgrenciler((l) => l.filter((x) => !set.has(x))); };
+
+  const hedefGecerli = hedefTur === "tumu" || (hedefTur === "sinif" && hedefSiniflar.length > 0) || (hedefTur === "secili" && hedefOgrenciler.length > 0);
+  const kaydedilebilir = baslik.trim() && sonTarih && hedefGecerli;
+
+  const kaydet = () => {
+    if (!kaydedilebilir) return;
+    const hedef = hedefTur === "sinif" ? { tur: "sinif", siniflar: hedefSiniflar } : hedefTur === "secili" ? { tur: "secili", ogrenciIds: hedefOgrenciler } : { tur: "tumu" };
+    onKaydet({
+      id: mevcut?.id || "od_" + uid(),
+      baslik: baslik.trim(), aciklama: aciklama.trim(), sonTarih, ders: ders.trim(), konu: konu.trim(),
+      kaynakId: kaynakId || "", kaynakAd: kaynakId ? (kaynakKitap?.ad || kaynakAd || "") : "",
+      sayfaBas: kaynakId ? String(sayfaBas).trim() : "", sayfaSon: kaynakId ? String(sayfaSon).trim() : "",
+      hedef, olusturan: mevcut?.olusturan || kullaniciAdi || "Öğretmen", olusturmaZamani: mevcut?.olusturmaZamani || Date.now(),
+    });
+  };
+
+  const kitapSecildi = (k) => {
+    if (!k) { setKaynakId(""); setKaynakAd(""); }
+    else { setKaynakId(k.id); setKaynakAd(k.ad); if (!ders && k.ders) setDers(k.ders); }
+    setSeciciAcik(false);
+  };
+  const kitapKaydedildi = (k) => {
+    updateKitaplar({ ...(kitaplar || {}), [k.id]: k });
+    setKitapEkleAcik(false);
+    kitapSecildi(k);
+  };
+  const kitapSil = (k) => {
+    if (!window.confirm(`"${k.ad}" kitap listesinden silinsin mi? (Daha önce bu kitapla verilen ödevler etkilenmez, sadece kapak resmi görünmez.)`)) return;
+    const kopya = { ...(kitaplar || {}) }; delete kopya[k.id];
+    updateKitaplar(kopya);
+    if (kaynakId === k.id) { setKaynakId(""); setKaynakAd(""); }
+  };
+
+  const etiket = (t) => <label className="text-xs font-semibold mb-1.5 block" style={{ color: SUBTLE }}>{t}</label>;
+  const secenek = (deger, yazi) => (
+    <label className="flex items-center gap-2 text-sm cursor-pointer">
+      <input type="radio" name="odevHedef" checked={hedefTur === deger} onChange={() => setHedefTur(deger)} />{yazi}
+    </label>
+  );
+
+  return (
+    <>
+      <OdevModal baslik={mevcut ? "Ödevi Düzenle" : "Ödev Oluştur"} onKapat={onKapat}
+        alt={<><GoogleButton variant="outline" onClick={onKapat}>İptal</GoogleButton><GoogleButton onClick={kaydet} disabled={!kaydedilebilir}><IconCheck size={15} color="#fff" />Kaydet</GoogleButton></>}>
+        <div className="flex flex-col gap-4">
+          <div>{etiket("BAŞLIK *")}<GoogleInput value={baslik} onChange={(e) => setBaslik(e.target.value)} placeholder="Örn. Hafta Sonu Ödevi" className="w-full" /></div>
+          <div>{etiket("AÇIKLAMA")}
+            <textarea value={aciklama} onChange={(e) => setAciklama(e.target.value)} rows={3} placeholder="Ödevle ilgili notlarınız…"
+              className="w-full bg-white border rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 resize-y" style={{ borderColor: BORDER }} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>{etiket("SON TESLİM TARİHİ *")}<GoogleInput type="date" value={sonTarih} onChange={(e) => setSonTarih(e.target.value)} className="w-full" /></div>
+            <div>{etiket("DERS")}<OdevDersSecici value={ders} onChange={setDers} /></div>
+          </div>
+          <div>{etiket("KONU (isteğe bağlı)")}<GoogleInput value={konu} onChange={(e) => setKonu(e.target.value)} placeholder="Örn. Polinomlar" className="w-full" /></div>
+
+          <div>
+            {etiket("KAYNAK (isteğe bağlı)")}
+            {kaynakId ? (
+              <div className="flex items-center gap-3 rounded-2xl p-3" style={{ background: `${BLUE}0F`, border: `1px solid ${BLUE}33` }}>
+                <OdevKapak kapak={kaynakKitap?.kapak} boyut={40} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold truncate" style={{ color: BLUE }}>{kaynakKitap?.ad || kaynakAd}</p>
+                  {kaynakKitap?.ders && <p className="text-[11px]" style={{ color: SUBTLE }}>{kaynakKitap.ders}</p>}
+                </div>
+                <button onClick={() => kitapSecildi(null)} className="p-1" title="Kaynağı kaldır"><IconX size={16} color={SUBTLE} /></button>
+              </div>
+            ) : (
+              <p className="text-xs mb-2" style={{ color: SUBTLE }}>Henüz kaynak seçilmedi.</p>
+            )}
+            <div className="flex flex-wrap gap-2 mt-2">
+              <GoogleButton variant="outline" onClick={() => setSeciciAcik(true)}><IconBook size={15} color={BLUE} />Kitap Seç</GoogleButton>
+              <GoogleButton variant="outline" onClick={() => setKitapEkleAcik(true)}><IconPlus size={15} color={BLUE} />Kitap Ekle</GoogleButton>
+            </div>
+          </div>
+
+          {kaynakId && (
+            <div>
+              {etiket("SAYFA ARALIĞI")}
+              <div className="flex items-center gap-2">
+                <GoogleInput type="number" inputMode="numeric" min="1" value={sayfaBas} onChange={(e) => setSayfaBas(e.target.value)} placeholder="Başlangıç" className="w-full" />
+                <span style={{ color: SUBTLE }}>—</span>
+                <GoogleInput type="number" inputMode="numeric" min="1" value={sayfaSon} onChange={(e) => setSayfaSon(e.target.value)} placeholder="Bitiş" className="w-full" />
+              </div>
+            </div>
+          )}
+
+          <div>
+            {etiket("ATAMA HEDEFİ")}
+            <div className="flex flex-wrap gap-x-5 gap-y-2 mb-3">
+              {secenek("tumu", "Tüm öğrenciler")}
+              {secenek("sinif", "Sınıf seç")}
+              {secenek("secili", "Öğrenci seç")}
+            </div>
+            {hedefTur === "sinif" && (
+              siniflar.length === 0 ? <p className="text-xs" style={{ color: SUBTLE }}>Kayıtlı sınıf bulunamadı.</p> : (
+                <div className="flex flex-wrap gap-2">
+                  {siniflar.map((sn) => {
+                    const aktif = hedefSiniflar.includes(sn);
+                    return <button key={sn} onClick={() => toggleSinif(sn)} className="text-xs font-semibold px-3 py-1.5 rounded-full"
+                      style={{ color: aktif ? "#fff" : BLUE, background: aktif ? BLUE : `${BLUE}14` }}>{sn}</button>;
+                  })}
+                </div>
+              )
+            )}
+            {hedefTur === "secili" && (
+              <div>
+                <div className="flex gap-2 mb-2">
+                  <GoogleInput value={ogrAra} onChange={(e) => setOgrAra(e.target.value)} placeholder="Ad veya numara ara…" className="flex-1 min-w-0" />
+                  <GoogleSelect value={ogrSinif} onChange={(e) => setOgrSinif(e.target.value)} className="w-28">
+                    <option value="">Tümü</option>
+                    {siniflar.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
+                  </GoogleSelect>
+                </div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-medium" style={{ color: BLUE }}>{hedefOgrenciler.length} öğrenci seçili</span>
+                  <span className="flex gap-3 text-xs font-medium">
+                    <button onClick={gorunenleriSec} style={{ color: BLUE }}>Görünenleri seç</button>
+                    <button onClick={gorunenleriTemizle} style={{ color: SUBTLE }}>Temizle</button>
+                  </span>
+                </div>
+                <div className="rounded-xl overflow-y-auto" style={{ border: `1px solid ${BORDER}`, maxHeight: 220 }}>
+                  {gorunenOgrenciler.length === 0 ? <p className="text-xs p-3" style={{ color: SUBTLE }}>Öğrenci bulunamadı.</p> : gorunenOgrenciler.map((s) => (
+                    <label key={s.id} className="flex items-center gap-3 px-3 py-2 cursor-pointer" style={{ borderBottom: `1px solid ${BORDER}` }}>
+                      <input type="checkbox" checked={hedefOgrenciler.includes(s.id)} onChange={() => toggleOgrenci(s.id)} />
+                      <span className="text-sm flex-1 min-w-0 truncate">{s.ad}</span>
+                      <span className="text-[11px]" style={{ color: SUBTLE }}>{s.sinif || "—"}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            {!hedefGecerli && <p className="text-[11px] mt-2" style={{ color: RED }}>{hedefTur === "sinif" ? "En az bir sınıf seçin." : "En az bir öğrenci seçin."}</p>}
+          </div>
+        </div>
+      </OdevModal>
+      {seciciAcik && <OdevKitapSec kitaplar={kitaplar} seciliId={kaynakId} onSec={kitapSecildi} onKitapEkle={() => setKitapEkleAcik(true)} onKitapSil={kitapSil} onKapat={() => setSeciciAcik(false)} />}
+      {kitapEkleAcik && <OdevKitapEkle onKaydet={(k) => { setSeciciAcik(false); kitapKaydedildi(k); }} onKapat={() => setKitapEkleAcik(false)} />}
+    </>
+  );
+}
+
+// --- Ödev detayı: kim tamamladı / kim bekliyor -------------------------------------------------
+function OdevDetay({ odev, students, konuTakip, kitaplar, onDuzenle, onSil, onKapat }) {
+  const [sekme, setSekme] = useState("bekleyen");
+  const hedef = useMemo(() => odevHedefOgrenciler(odev, students).slice().sort((a, b) => a.ad.localeCompare(b.ad, "tr")), [odev, students]);
+  const satirlar = hedef.map((s) => ({ s, tamam: odevTamamOku(konuTakip, s.id)[odev.id] || null }));
+  const bekleyen = satirlar.filter((r) => !r.tamam);
+  const tamamlayan = satirlar.filter((r) => r.tamam).sort((a, b) => (b.tamam.zaman || 0) - (a.tamam.zaman || 0));
+  const yuzde = hedef.length ? Math.round((tamamlayan.length * 100) / hedef.length) : 0;
+  const kitap = odev.kaynakId ? (kitaplar || {})[odev.kaynakId] : null;
+  const gorunen = sekme === "bekleyen" ? bekleyen : tamamlayan;
+  const sonD = odevSonDurum(odev.sonTarih);
+  return (
+    <OdevModal baslik={odev.baslik} onKapat={onKapat}
+      alt={<><button onClick={onSil} className="flex items-center gap-1 text-xs font-semibold px-3.5 py-2 rounded-full" style={{ color: RED, border: `1px solid ${RED}55` }}><IconTrash size={13} color={RED} />Sil</button>
+        <GoogleButton variant="outline" onClick={onDuzenle}><IconEdit size={14} color={BLUE} />Düzenle</GoogleButton></>}>
+      {odev.aciklama && <p className="text-sm mb-3 whitespace-pre-wrap" style={{ color: INK }}>{odev.aciklama}</p>}
+      {odev.kaynakAd && (
+        <div className="flex items-center gap-3 rounded-2xl p-3 mb-3" style={{ background: `${BLUE}0F` }}>
+          <OdevKapak kapak={kitap?.kapak} boyut={36} />
+          <div className="min-w-0"><p className="text-sm font-semibold truncate" style={{ color: BLUE }}>{odev.kaynakAd}</p>
+            {odevSayfaMetni(odev) && <p className="text-[11px]" style={{ color: SUBTLE }}>{odevSayfaMetni(odev)}</p>}</div>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2 mb-4 text-[11px] font-medium">
+        {odev.ders && <span className="px-2.5 py-1 rounded-full" style={{ color: BLUE, background: `${BLUE}14` }}>{odev.ders}</span>}
+        {odev.konu && <span className="px-2.5 py-1 rounded-full" style={{ color: PURPLE, background: `${PURPLE}14` }}>{odev.konu}</span>}
+        <span className="px-2.5 py-1 rounded-full" style={{ color: sonD.renk, background: `${sonD.renk}18` }}>{fmtDateTR(odev.sonTarih)} · {sonD.etiket}</span>
+        <span className="px-2.5 py-1 rounded-full" style={{ color: SUBTLE, background: BG }}>{odevHedefEtiketi(odev, students)}</span>
+      </div>
+      <div className="mb-4">
+        <div className="flex items-center justify-between text-xs font-semibold mb-1.5"><span>{tamamlayan.length} / {hedef.length} öğrenci tamamladı</span><span style={{ color: GREEN }}>%{yuzde}</span></div>
+        <OdevIlerleme yuzde={yuzde} />
+      </div>
+      <div className="flex gap-2 mb-3">
+        {[["bekleyen", `Bekleyen (${bekleyen.length})`], ["tamam", `Tamamlayan (${tamamlayan.length})`]].map(([id, yazi]) => (
+          <button key={id} onClick={() => setSekme(id)} className="text-xs font-semibold px-3.5 py-1.5 rounded-full"
+            style={{ color: sekme === id ? "#fff" : SUBTLE, background: sekme === id ? (id === "tamam" ? GREEN : ORANGE) : BG }}>{yazi}</button>
+        ))}
+      </div>
+      {gorunen.length === 0 ? <p className="text-sm text-center py-6" style={{ color: SUBTLE }}>{sekme === "bekleyen" ? "Bekleyen öğrenci yok 🎉" : "Henüz tamamlayan yok."}</p> : (
+        <div>
+          {gorunen.map(({ s, tamam }) => (
+            <div key={s.id} className="flex items-center gap-3 py-2.5" style={{ borderBottom: `1px solid ${BORDER}` }}>
+              <span className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: tamam ? `${GREEN}22` : `${ORANGE}22` }}>
+                {tamam ? <IconCheck size={14} color={GREEN} strokeWidth={3} /> : <IconClock size={14} color={ORANGE} />}
+              </span>
+              <div className="min-w-0 flex-1"><p className="text-sm font-medium truncate">{s.ad}</p><p className="text-[11px]" style={{ color: SUBTLE }}>{s.sinif || "—"}</p></div>
+              {tamam && tamam.tarih && <span className="text-[11px]" style={{ color: GREEN }}>{fmtDateTR(tamam.tarih)}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </OdevModal>
+  );
+}
+
+// --- Öğretmen: "Ödevler" sekmesi ---------------------------------------------------------------
+function Odevler({ students, odevler, updateOdevler, odevKitaplari, updateOdevKitaplari, konuTakip, kullaniciAdi }) {
+  const [form, setForm] = useState(null); // { mevcut: odev | null }
+  const [detayId, setDetayId] = useState(null);
+  const [kitapEkleAcik, setKitapEkleAcik] = useState(false);
+  const [sinifFiltre, setSinifFiltre] = useState("");
+  const [durumFiltre, setDurumFiltre] = useState("tumu");
+  const siniflar = useMemo(() => Array.from(new Set(students.map((s) => s.sinif).filter(Boolean))).sort((a, b) => a.localeCompare(b, "tr")), [students]);
+
+  const tumSatirlar = useMemo(() => Object.values(odevler || {}).filter((o) => o && o.id).map((o) => {
+    const hedef = odevHedefOgrenciler(o, students).filter((s) => !sinifFiltre || s.sinif === sinifFiltre);
+    const tamam = hedef.filter((s) => odevTamamOku(konuTakip, s.id)[o.id]).length;
+    return { o, hedefSayisi: hedef.length, tamam, fark: odevGunFarki(o.sonTarih) };
+  }).filter((r) => !sinifFiltre || r.hedefSayisi > 0), [odevler, students, konuTakip, sinifFiltre]);
+
+  const istatistik = useMemo(() => {
+    const atama = tumSatirlar.reduce((t, r) => t + r.hedefSayisi, 0);
+    const tamam = tumSatirlar.reduce((t, r) => t + r.tamam, 0);
+    return { odev: tumSatirlar.length, atama, tamam, yuzde: atama ? Math.round((tamam * 100) / atama) : 0 };
+  }, [tumSatirlar]);
+
+  const satirlar = useMemo(() => tumSatirlar.filter((r) => {
+    if (durumFiltre === "devam") return r.fark >= 0;
+    if (durumFiltre === "suresi") return r.fark < 0 && r.tamam < r.hedefSayisi;
+    if (durumFiltre === "bitti") return r.hedefSayisi > 0 && r.tamam === r.hedefSayisi;
+    return true;
+  }).sort((a, b) => {
+    const aDevam = a.fark >= 0, bDevam = b.fark >= 0;
+    if (aDevam !== bDevam) return aDevam ? -1 : 1;
+    return aDevam ? a.o.sonTarih.localeCompare(b.o.sonTarih) : b.o.sonTarih.localeCompare(a.o.sonTarih);
+  }), [tumSatirlar, durumFiltre]);
+
+  const odevKaydet = (odev) => { updateOdevler({ ...(odevler || {}), [odev.id]: odev }); setForm(null); };
+  const odevSil = (odev) => {
+    if (!window.confirm(`"${odev.baslik}" ödevi silinsin mi? Öğrencilerin ekranından da kalkar.`)) return;
+    const kopya = { ...(odevler || {}) }; delete kopya[odev.id];
+    updateOdevler(kopya); setDetayId(null);
+  };
+  const detayOdev = detayId ? (odevler || {})[detayId] : null;
+
+  const statKart = (etiket, deger, renk, alt) => (
+    <div className="mat-card rounded-2xl p-4" style={{ background: SURFACE, borderLeft: `4px solid ${renk}` }}>
+      <p className="text-[10px] font-bold tracking-wider" style={{ color: SUBTLE }}>{etiket}</p>
+      <p className="font-display text-2xl font-bold mt-0.5">{deger}</p>
+      {alt && <p className="text-[11px]" style={{ color: SUBTLE }}>{alt}</p>}
+    </div>
+  );
+
+  return (
+    <div>
+      <Baslik title="Ödevler" desc="Ödev tanımlayın, öğrencilere atayın; öğrenciler ödevlerini Veli Girişi'nden görür ve tamamlandı olarak kendileri işaretler."
+        right={<div className="flex gap-2 flex-wrap justify-end">
+          <GoogleButton variant="outline" onClick={() => setKitapEkleAcik(true)}><IconBook size={15} color={BLUE} />Kitap Ekle</GoogleButton>
+          <GoogleButton onClick={() => setForm({ mevcut: null })}><IconPlus size={15} color="#fff" />Yeni Ödev</GoogleButton>
+        </div>} />
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+        {statKart("ÖDEV", istatistik.odev, BLUE)}
+        {statKart("ATAMA", istatistik.atama, PURPLE, "öğrenci × ödev")}
+        {statKart("TAMAMLANAN", istatistik.tamam, GREEN, `${istatistik.atama - istatistik.tamam} bekliyor`)}
+        <div className="mat-card rounded-2xl p-4" style={{ background: SURFACE, borderLeft: `4px solid ${ORANGE}` }}>
+          <p className="text-[10px] font-bold tracking-wider" style={{ color: SUBTLE }}>TAMAMLANMA</p>
+          <p className="font-display text-2xl font-bold mt-0.5 mb-2">%{istatistik.yuzde}</p>
+          <OdevIlerleme yuzde={istatistik.yuzde} renk={ORANGE} />
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {[["tumu", "Tümü"], ["devam", "Devam eden"], ["suresi", "Süresi geçen"], ["bitti", "Tamamlanan"]].map(([id, yazi]) => (
+          <button key={id} onClick={() => setDurumFiltre(id)} className="text-xs font-semibold px-3.5 py-1.5 rounded-full"
+            style={{ color: durumFiltre === id ? "#fff" : SUBTLE, background: durumFiltre === id ? BLUE : SURFACE, border: `1px solid ${durumFiltre === id ? BLUE : BORDER}` }}>{yazi}</button>
+        ))}
+        <GoogleSelect value={sinifFiltre} onChange={(e) => setSinifFiltre(e.target.value)} size="md" className="ml-auto w-36">
+          <option value="">Tüm Sınıflar</option>
+          {siniflar.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
+        </GoogleSelect>
+      </div>
+
+      {satirlar.length === 0 ? (
+        <Bos mesaj={tumSatirlar.length === 0 ? "Henüz ödev verilmedi" : "Bu filtreye uyan ödev yok"} ipucu={tumSatirlar.length === 0 ? "Sağ üstteki \"Yeni Ödev\" ile ilk ödevi oluşturun." : "Filtreyi değiştirmeyi deneyin."} />
+      ) : (
+        <div className="flex flex-col gap-3">
+          {satirlar.map(({ o, hedefSayisi, tamam, fark }) => {
+            const kitap = o.kaynakId ? (odevKitaplari || {})[o.kaynakId] : null;
+            const sd = odevSonDurum(o.sonTarih);
+            const yuzde = hedefSayisi ? Math.round((tamam * 100) / hedefSayisi) : 0;
+            const bitti = hedefSayisi > 0 && tamam === hedefSayisi;
+            return (
+              <button key={o.id} onClick={() => setDetayId(o.id)} className="mat-card mat-card-hover rounded-2xl p-4 text-left w-full" style={{ background: SURFACE }}>
+                <div className="flex items-start justify-between gap-3 mb-2">
+                  <p className="font-display text-sm font-semibold">{o.baslik}</p>
+                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full shrink-0" style={{ color: bitti ? GREEN : sd.renk, background: `${bitti ? GREEN : sd.renk}18` }}>{bitti ? "Tamamlandı" : sd.etiket}</span>
+                </div>
+                {o.kaynakAd && (
+                  <div className="flex items-center gap-2.5 rounded-xl p-2.5 mb-2" style={{ background: `${BLUE}0F` }}>
+                    <OdevKapak kapak={kitap?.kapak} boyut={30} />
+                    <div className="min-w-0"><p className="text-xs font-semibold truncate" style={{ color: BLUE }}>{o.kaynakAd}</p>
+                      {odevSayfaMetni(o) && <p className="text-[11px]" style={{ color: SUBTLE }}>{odevSayfaMetni(o)}</p>}</div>
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-1.5 mb-3 text-[11px] font-medium">
+                  {o.ders && <span className="px-2 py-0.5 rounded-full" style={{ color: BLUE, background: `${BLUE}14` }}>{o.ders}</span>}
+                  {o.konu && <span className="px-2 py-0.5 rounded-full" style={{ color: PURPLE, background: `${PURPLE}14` }}>{o.konu}</span>}
+                  <span className="px-2 py-0.5 rounded-full flex items-center gap-1" style={{ color: SUBTLE, background: BG }}><IconCalendar size={11} color={SUBTLE} />{fmtDateTR(o.sonTarih)}</span>
+                  <span className="px-2 py-0.5 rounded-full flex items-center gap-1" style={{ color: SUBTLE, background: BG }}><IconUsers size={11} color={SUBTLE} />{odevHedefEtiketi(o, students)}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1"><OdevIlerleme yuzde={yuzde} /></div>
+                  <span className="text-[11px] font-semibold shrink-0" style={{ color: SUBTLE }}>{tamam}/{hedefSayisi} tamamladı</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {form && <OdevFormu mevcut={form.mevcut} students={students} siniflar={siniflar} kitaplar={odevKitaplari} updateKitaplar={updateOdevKitaplari}
+        kullaniciAdi={kullaniciAdi} onKaydet={odevKaydet} onKapat={() => setForm(null)} />}
+      {detayOdev && !form && <OdevDetay odev={detayOdev} students={students} konuTakip={konuTakip} kitaplar={odevKitaplari}
+        onDuzenle={() => setForm({ mevcut: detayOdev })} onSil={() => odevSil(detayOdev)} onKapat={() => setDetayId(null)} />}
+      {kitapEkleAcik && <OdevKitapEkle onKaydet={(k) => { updateOdevKitaplari({ ...(odevKitaplari || {}), [k.id]: k }); setKitapEkleAcik(false); }} onKapat={() => setKitapEkleAcik(false)} />}
+    </div>
+  );
+}
+
+// --- Öğrenci / Veli girişi: "Ödevlerim" --------------------------------------------------------
+function odevOgrenciListesi(odevler, ogrenci) {
+  if (!ogrenci) return [];
+  return Object.values(odevler || {}).filter((o) => o && o.id && odevHedefOgrenciler(o, [ogrenci]).length > 0);
+}
+// Karne'de (öğretmen) gösterilen ödev özeti. Ödevin VERİLDİĞİ tarihe ve derse göre filtrelenebilir.
+function odevVerilisTarihi(o) {
+  return o.olusturmaZamani ? toISOLocal(new Date(o.olusturmaZamani)) : o.sonTarih;
+}
+function OdevOzetKarti({ ogrenci, odevler, konuTakip, baslikGoster = true }) {
+  const [tarihSecili, setTarihSecili] = useState("");
+  const [dersSecili, setDersSecili] = useState("");
+  const tumListe = useMemo(() => odevOgrenciListesi(odevler, ogrenci), [odevler, ogrenci]);
+  const tarihler = useMemo(() => Array.from(new Set(tumListe.map(odevVerilisTarihi))).sort((a, b) => b.localeCompare(a)), [tumListe]);
+  const dersler = useMemo(() => Array.from(new Set(tumListe.map((o) => o.ders).filter(Boolean))).sort((a, b) => a.localeCompare(b, "tr")), [tumListe]);
+  const tarihEtkin = tarihler.includes(tarihSecili) ? tarihSecili : "";
+  const dersEtkin = dersler.includes(dersSecili) ? dersSecili : "";
+  const liste = tumListe.filter((o) => (!tarihEtkin || odevVerilisTarihi(o) === tarihEtkin) && (!dersEtkin || o.ders === dersEtkin));
+  const tamamlar = ogrenci ? odevTamamOku(konuTakip, ogrenci.id) : {};
+  const bekleyen = liste.filter((o) => !tamamlar[o.id]).sort((a, b) => a.sonTarih.localeCompare(b.sonTarih));
+  const bitmis = liste.filter((o) => tamamlar[o.id]).sort((a, b) => ((tamamlar[b.id] || {}).zaman || 0) - ((tamamlar[a.id] || {}).zaman || 0));
+  const geciken = bekleyen.filter((o) => odevGunFarki(o.sonTarih) < 0).length;
+  const yuzde = liste.length ? Math.round((bitmis.length * 100) / liste.length) : 0;
+  return (
+    <Kart className="p-5 mb-6">
+      {baslikGoster && <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconNote size={17} color={PURPLE} />Ödev Özeti</h2>}
+      {tumListe.length === 0 ? (
+        <p className="text-sm" style={{ color: SUBTLE }}>Bu öğrenciye henüz ödev atanmamış.</p>
+      ) : (
+        <>
+          <div className="flex gap-2 mb-4">
+            <GoogleSelect value={tarihEtkin} onChange={(e) => setTarihSecili(e.target.value)} className="flex-1 min-w-0">
+              <option value="">Tüm Tarihler</option>
+              {tarihler.map((t) => <option key={t} value={t}>{fmtDateTR(t)}</option>)}
+            </GoogleSelect>
+            <GoogleSelect value={dersEtkin} onChange={(e) => setDersSecili(e.target.value)} className="flex-1 min-w-0">
+              <option value="">Tüm Dersler</option>
+              {dersler.map((d) => <option key={d} value={d}>{d}</option>)}
+            </GoogleSelect>
+          </div>
+          {liste.length === 0 ? (
+            <p className="text-sm" style={{ color: SUBTLE }}>Seçili tarih ve derse ait ödev bulunmuyor.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-2.5 mb-3">
+                {[["TAMAMLANAN", `${bitmis.length}/${liste.length}`, GREEN], ["BEKLEYEN", bekleyen.length, ORANGE], ["SÜRESİ GEÇEN", geciken, RED]].map(([e, d, r]) => (
+                  <div key={e} className="rounded-xl p-2.5" style={{ background: `${r}10` }}>
+                    <p className="text-[9px] font-bold tracking-wider" style={{ color: SUBTLE }}>{e}</p>
+                    <p className="font-display text-lg font-bold" style={{ color: r }}>{d}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-1"><OdevIlerleme yuzde={yuzde} /></div>
+                <span className="text-xs font-semibold shrink-0" style={{ color: GREEN }}>%{yuzde}</span>
+              </div>
+              {bekleyen.length > 0 && (
+                <>
+                  <p className="text-[11px] font-semibold tracking-wide mb-1.5" style={{ color: SUBTLE }}>BEKLEYEN ÖDEVLER</p>
+                  {bekleyen.map((o) => {
+                    const sd = odevSonDurum(o.sonTarih);
+                    return (
+                      <div key={o.id} className="flex items-center justify-between gap-3 py-2" style={{ borderBottom: `1px solid ${BORDER}` }}>
+                        <div className="min-w-0"><p className="text-sm font-medium truncate">{o.baslik}</p>
+                          <p className="text-[11px]" style={{ color: SUBTLE }}>{[o.ders, "Verilme: " + fmtDateTR(odevVerilisTarihi(o)), "Son: " + fmtDateTR(o.sonTarih)].filter(Boolean).join(" · ")}</p></div>
+                        <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full shrink-0" style={{ color: sd.renk, background: `${sd.renk}18` }}>{sd.etiket}</span>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+              {bitmis.length > 0 && (
+                <>
+                  <p className="text-[11px] font-semibold tracking-wide mt-3 mb-1.5" style={{ color: SUBTLE }}>TAMAMLANANLAR</p>
+                  {bitmis.map((o) => (
+                    <div key={o.id} className="flex items-center justify-between gap-3 py-2" style={{ borderBottom: `1px solid ${BORDER}` }}>
+                      <div className="min-w-0"><p className="text-sm font-medium truncate">{o.baslik}</p>
+                        <p className="text-[11px]" style={{ color: SUBTLE }}>{[o.ders, "Verilme: " + fmtDateTR(odevVerilisTarihi(o))].filter(Boolean).join(" · ")}</p></div>
+                      <span className="text-[11px] font-medium flex items-center gap-1 shrink-0" style={{ color: GREEN }}><IconCheck size={12} color={GREEN} strokeWidth={3} />{(tamamlar[o.id] || {}).tarih ? fmtDateTR(tamamlar[o.id].tarih) : "Tamamlandı"}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </Kart>
+  );
+}
+function VeliOdevler({ veliNo, students, odevler, odevKitaplari, konuTakip, updateKonuTakipKayit, onGeri }) {
+  const ogrenci = useMemo(() => students.find((s) => s.no === veliNo) || null, [students, veliNo]);
+  const [sekme, setSekme] = useState("bekleyen");
+  const [isleniyor, setIsleniyor] = useState(null);
+  const tamamlar = ogrenci ? odevTamamOku(konuTakip, ogrenci.id) : {};
+  const liste = useMemo(() => odevOgrenciListesi(odevler, ogrenci), [odevler, ogrenci]);
+  const bekleyen = liste.filter((o) => !tamamlar[o.id]).sort((a, b) => a.sonTarih.localeCompare(b.sonTarih));
+  const bitmis = liste.filter((o) => tamamlar[o.id]).sort((a, b) => ((tamamlar[b.id] || {}).zaman || 0) - ((tamamlar[a.id] || {}).zaman || 0));
+  const geciken = bekleyen.filter((o) => odevGunFarki(o.sonTarih) < 0).length;
+  const yuzde = liste.length ? Math.round((bitmis.length * 100) / liste.length) : 0;
+  const gorunen = sekme === "bekleyen" ? bekleyen : sekme === "tamam" ? bitmis : [...bekleyen, ...bitmis];
+
+  if (!ogrenci) {
+    return (<><GeriButonu onClick={onGeri} /><Bos mesaj="Öğrenci bulunamadı" ipucu="Bu şifreyle eşleşen bir öğrenci kaydı bulunamadı." /></>);
+  }
+
+  const isaretle = (odev) => {
+    setIsleniyor(odev.id);
+    updateKonuTakipKayit(ogrenci.id, ODEV_TAMAM_ANAHTARI, { ...tamamlar, [odev.id]: { zaman: Date.now(), tarih: todayISO() } });
+    setTimeout(() => setIsleniyor(null), 700);
+  };
+  const geriAl = (odev) => {
+    if (!window.confirm("Bu ödev tekrar \"bekleyen\" durumuna alınsın mı?")) return;
+    const kalan = { ...tamamlar }; delete kalan[odev.id];
+    updateKonuTakipKayit(ogrenci.id, ODEV_TAMAM_ANAHTARI, kalan);
+  };
+
+  return (
+    <div className="space-y-4">
+      <Kart className="p-4 flex items-center gap-3">
+        <button onClick={onGeri} className="w-11 h-11 rounded-full flex items-center justify-center shrink-0" style={{ background: BG }}><IconChevronLeft size={18} color={INK} /></button>
+        <div><h1 className="font-display text-lg font-bold">Ödevlerim</h1><p className="text-sm" style={{ color: SUBTLE }}>{ogrenci.ad}</p></div>
+      </Kart>
+
+      <div className="grid grid-cols-3 gap-3">
+        {[["BEKLEYEN", bekleyen.length, ORANGE], ["TAMAMLANAN", bitmis.length, GREEN], ["SÜRESİ GEÇEN", geciken, RED]].map(([e, d, r]) => (
+          <div key={e} className="mat-card rounded-2xl p-3" style={{ background: SURFACE, borderLeft: `4px solid ${r}` }}>
+            <p className="text-[9px] font-bold tracking-wider" style={{ color: SUBTLE }}>{e}</p>
+            <p className="font-display text-2xl font-bold">{d}</p>
+          </div>
+        ))}
+      </div>
+      {liste.length > 0 && (
+        <Kart className="p-4">
+          <div className="flex items-center justify-between text-xs font-semibold mb-2"><span>Genel ilerleme</span><span style={{ color: GREEN }}>%{yuzde}</span></div>
+          <OdevIlerleme yuzde={yuzde} />
         </Kart>
       )}
+
+      <div className="flex gap-2">
+        {[["bekleyen", "Bekliyor", bekleyen.length], ["tamam", "Tamamlandı", bitmis.length], ["tumu", "Tümü", liste.length]].map(([id, yazi, sayi]) => (
+          <button key={id} onClick={() => setSekme(id)} className="flex-1 text-xs font-semibold py-2.5 rounded-full"
+            style={{ color: sekme === id ? "#fff" : SUBTLE, background: sekme === id ? BLUE : SURFACE, border: `1px solid ${sekme === id ? BLUE : BORDER}` }}>{yazi} ({sayi})</button>
+        ))}
+      </div>
+
+      {gorunen.length === 0 ? (
+        <Bos mesaj={liste.length === 0 ? "Henüz ödev verilmedi" : sekme === "bekleyen" ? "Bekleyen ödevin yok 🎉" : "Bu listede ödev yok"} ipucu={liste.length === 0 ? "Öğretmenin ödev verdiğinde burada görünecek." : ""} />
+      ) : gorunen.map((o) => {
+        const tamam = tamamlar[o.id];
+        const sd = odevSonDurum(o.sonTarih);
+        const kitap = o.kaynakId ? (odevKitaplari || {})[o.kaynakId] : null;
+        const renk = tamam ? GREEN : sd.tip === "gecti" ? RED : (sd.tip === "bugun" || sd.tip === "yarin") ? ORANGE : BLUE;
+        return (
+          <div key={o.id} className="mat-card rounded-2xl p-4" style={{ background: tamam ? `${GREEN}0D` : sd.tip === "gecti" ? `${RED}08` : SURFACE, border: `1px solid ${renk}40` }}>
+            <div className="flex items-start justify-between gap-3 mb-2">
+              <p className="font-display text-base font-semibold">{o.baslik}</p>
+              <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full shrink-0" style={{ color: renk, background: `${renk}1A` }}>{tamam ? "Tamamlandı" : sd.tip === "gecti" ? "Geçti" : sd.etiket}</span>
+            </div>
+            {o.aciklama && <p className="text-sm mb-3 whitespace-pre-wrap" style={{ color: SUBTLE }}>{o.aciklama}</p>}
+            {o.kaynakAd && (
+              <div className="flex items-center gap-3 rounded-2xl p-3 mb-3" style={{ background: `${BLUE}0F` }}>
+                <OdevKapak kapak={kitap?.kapak} boyut={40} />
+                <div className="min-w-0"><p className="text-sm font-semibold" style={{ color: BLUE }}>{o.kaynakAd}</p>
+                  {odevSayfaMetni(o) && <p className="text-xs" style={{ color: SUBTLE }}>{odevSayfaMetni(o)}</p>}</div>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1.5 mb-3 text-[11px] font-medium">
+              {o.ders && <span className="px-2.5 py-1 rounded-full" style={{ color: BLUE, background: `${BLUE}14` }}>{o.ders}</span>}
+              {o.konu && <span className="px-2.5 py-1 rounded-full" style={{ color: PURPLE, background: `${PURPLE}14` }}>{o.konu}</span>}
+            </div>
+            <p className="text-xs flex items-center gap-1.5 mb-3" style={{ color: SUBTLE }}>
+              <IconCalendar size={13} color={SUBTLE} />Son teslim tarihi: {fmtDateTR(o.sonTarih)}{!tamam && sd.tip === "gecti" && <span style={{ color: RED }}> ({sd.etiket})</span>}
+            </p>
+            {o.olusturan && (
+              <p className="text-xs flex items-center gap-1.5 mb-3" style={{ color: SUBTLE }}>
+                <IconUsers size={13} color={SUBTLE} />Ödevi veren: <span className="font-medium" style={{ color: INK }}>{o.olusturan}</span>
+              </p>
+            )}
+            {tamam ? (
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold flex items-center gap-1.5" style={{ color: GREEN }}><IconCheck size={14} color={GREEN} strokeWidth={3} />{tamam.tarih ? fmtDateTR(tamam.tarih) + " tarihinde tamamlandı" : "Tamamlandı"}</p>
+                <button onClick={() => geriAl(o)} className="text-[11px] font-medium underline" style={{ color: SUBTLE }}>Geri al</button>
+              </div>
+            ) : (
+              <button onClick={() => isaretle(o)} disabled={isleniyor === o.id} className="w-full py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-60"
+                style={{ background: `linear-gradient(135deg, ${BLUE}, ${BLUE_SOFT})` }}>{isleniyor === o.id ? "Kaydediliyor…" : "Tamamlandı olarak işaretle"}</button>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
