@@ -2551,10 +2551,11 @@ function saveKey(key, value) {
     db.ref(VERI_KOK + "/" + key).set(value);
     islemKaydet(key);
     // VELİ ÖNBELLEK KONTROLÜ: veli tarafı artık verinin tamamını sürekli dinlemiyor; bunun yerine
-    // burada güncellenen bu KÜÇÜK (birkaç bayt) zaman damgasını okuyarak "yeni veri var mı" kontrolü
-    // yapıyor. Böylece bir öğretmen/yönetici herhangi bir alanı (not, yoklama, deneme sonucu vb.)
-    // kaydettiğinde veliler için "Güncelle" butonu aktif hale gelebilir hale gelir.
-    db.ref(VERI_KOK + "/_sonGuncelleme").set(Date.now());
+    // burada güncellenen bu KÜÇÜK (birkaç bayt) KATEGORİ BAZLI zaman damgasını okuyarak "bu
+    // kategoride yeni veri var mı" kontrolü yapıyor. Örn. sadece "grades" değiştiyse yalnızca
+    // _sonGuncelleme/grades güncellenir; "attendance" damgası olduğu gibi kalır. Böylece veli
+    // tarafı "Güncelle" dediğinde sadece gerçekten değişen kategoriler yeniden indirilir.
+    db.ref(VERI_KOK + "/_sonGuncelleme/" + key).set(Date.now());
     // KULLANIM SAYACI: bu yazmanın yaklaşık boyutunu aylık toplam kullanım sayacına ekler ve
     // belirlenen eşik aşıldıysa (yönetici kendi elle tekrar açmadıkça) veri erişimini otomatik kapatır.
     kullanimKaydetVeKontrolEt(boyutMbTahminiHesapla(value));
@@ -5183,14 +5184,33 @@ function StudentTracker() {
   // bir bağlantı açmıyor. Bunun yerine: cihazda (localStorage) daha önce kaydedilmiş veri varsa
   // onu doğrudan gösterir (Firebase'e hiç gidilmez); yoksa bir kereliğine indirir ve saklar.
   // Yeni veri olup olmadığını yalnızca veli "Güncelle" butonuna bastığında, en fazla 4 saatte bir
-  // kontrol eder — kontrol de tüm veriyi değil, saveKey() içinde güncellenen küçük bir zaman
-  // damgasını (_sonGuncelleme) okur; yalnızca bu damga değişmişse tüm veri yeniden indirilir.
-  // NOT: bu damga tüm okul için ortaktır (öğrenci bazlı değildir); yani herhangi bir öğrencinin
-  // verisi değişse bile buton tüm veliler için aktif hale gelir — daha ince (öğrenci bazlı)
-  // ayrım, her yazma noktasını tek tek değiştirmeyi gerektirdiği için şimdilik kapsam dışı bırakıldı.
+  // kontrol eder. Kontrol KATEGORİ BAZLI çalışır: her kategorinin (notlar, yoklama, deneme
+  // sonuçları vb.) kendine ait küçük bir zaman damgası vardır (_sonGuncelleme/<kategori>,
+  // saveKey() içinde otomatik güncellenir). Sadece damgası değişen kategoriler yeniden indirilir;
+  // değişmeyen kategorilere hiç dokunulmaz. Ayrıca notlar/davranış notları/konu takibi/öğrenci
+  // kaydı, Firebase'de doğrudan öğrenci numarasıyla adreslenebildiği için SADECE bu velinin
+  // öğrencisine ait veri indirilir. Yoklama, deneme sonuçları, koçluk notları, ders içi ödev/
+  // kitap/katılım gibi kategoriler Firebase'de önce tarih/sınav bazlı saklandığından (öğrenci
+  // kimliği ikinci/üçüncü seviyede), bunlar değiştiğinde o kategorinin TAMAMI (okulun tamamı,
+  // ama sadece o kategori) indirilir — bu Firebase'in veri yapısından kaynaklanan bir sınırlamadır.
   const VELI_KONTROL_ARALIGI_MS = 4 * 60 * 60 * 1000; // 4 saat
   const veliOnbellekAnahtari = "veliKarneOnbellek_" + (anaId || "varsayilan");
   const veliKontrolAnahtari = "veliKarneSonKontrol_" + (anaId || "varsayilan");
+
+  // Velinin ilgilendiği tüm kategoriler ve her birinin çekme stratejisi:
+  //  "ogrenci" → Firebase'de doğrudan "kategori/öğrenciId" yoluyla saklanıyor, sadece bu öğrenciye
+  //              ait dilim indirilir.
+  //  "tumu"    → kategori tek parça (okulun tamamı, ama sadece o kategori) indirilir.
+  // "students" özel: bir sorgu (orderByChild "no") ile sadece bu öğrencinin kaydı indirilir.
+  const VELI_KATEGORILERI = {
+    grades: "ogrenci", davranisNotlari: "ogrenci", konuTakip: "ogrenci", students: "ogrenci-ozel",
+    attendance: "tumu", dersYoklama: "tumu", denemeler: "tumu", denemeSonuclari: "tumu",
+    denemeEkBilgi: "tumu", soruCozum: "tumu", kitapKontrol: "tumu", kocDevam: "tumu",
+    kocluklOgrenciler: "tumu", koclukNotlari: "tumu", koclukGorusleri: "tumu",
+    dersIciOdev: "tumu", dersIciKitap: "tumu", dersIciKatilim: "tumu",
+    odevler: "tumu", odevKitaplari: "tumu", kazanimListesi: "tumu",
+  };
+  const VELI_KATEGORI_ADLARI = Object.keys(VELI_KATEGORILERI);
 
   const [veliKontrolEdiliyor, setVeliKontrolEdiliyor] = useState(false);
   const [veliSonMesaj, setVeliSonMesaj] = useState("");
@@ -5200,11 +5220,16 @@ function StudentTracker() {
       return v ? Number(v) : 0;
     } catch (e) { return 0; }
   });
-  const [veliOnbellekSonGuncelleme, setVeliOnbellekSonGuncelleme] = useState(0);
+  // Son bilinen (cihazdaki) tam veri ve her kategorinin son indirildiği zaman damgaları — kısmi
+  // güncellemede "değişmeyen kategoriyi olduğu gibi koru" amacıyla tutulur (state değil, çünkü
+  // her değişiminde yeniden render tetiklemesine gerek yok — sadece işlevler içinde okunuyor).
+  const veliVeriRef = useRef(null);
+  const veliDamgalarRef = useRef({});
 
-  // Önbellekteki/indirilen veliyi, veli ekranının ihtiyaç duyduğu state'lere uygular.
+  // Önbellekteki/indirilen veriyi, veli ekranının ihtiyaç duyduğu state'lere uygular.
   const veliOnbellegiUygula = useCallback((data) => {
     const d = data || {};
+    veliVeriRef.current = d;
     setStudents(d.students || []);
     setDenemeler(d.denemeler || []);
     setDenemeSonuclari(d.denemeSonuclari || {});
@@ -5228,6 +5253,59 @@ function StudentTracker() {
     setKazanimListesi(d.kazanimListesi || {});
   }, []);
 
+  // Öğrenci numarasından gerçek Firebase kimliğini bulur (güvenlik eşleştirme tablosu üzerinden,
+  // tek ve küçük bir okuma).
+  const veliOgrenciIdBul = useCallback(async (veliNoDeger) => {
+    const noIdSnap = await db.ref(VERI_KOK + "/_ogrenciNoId/" + String(veliNoDeger)).once("value");
+    const kayit = noIdSnap.val();
+    if (!kayit || !kayit.id) throw new Error("Öğrenci eşleştirmesi (_ogrenciNoId) bulunamadı.");
+    return kayit.id;
+  }, []);
+
+  // Tek bir kategoriyi, o kategorinin çekme stratejisine göre okuyup ekranın beklediği şekle sokar.
+  const veliKategoriGetir = useCallback(async (kategori, id, veliNoDeger) => {
+    if (kategori === "students") {
+      const snap = await db.ref(VERI_KOK + "/students").orderByChild("no").equalTo(String(veliNoDeger)).once("value");
+      return dpDiziyeCevir(Object.values(snap.val() || {}));
+    }
+    const strateji = VELI_KATEGORILERI[kategori];
+    if (strateji === "ogrenci") {
+      const varsayilan = kategori === "konuTakip" ? {} : [];
+      const snap = await db.ref(VERI_KOK + "/" + kategori + "/" + id).once("value");
+      return { [id]: dpDiziyeCevir(snap.val() == null ? varsayilan : snap.val()) };
+    }
+    const snap = await db.ref(VERI_KOK + "/" + kategori).once("value");
+    return dpDiziyeCevir(snap.val() || {});
+  }, []);
+
+  // Verilen kategori listesini paralel olarak çeker, { kategori: veri } şeklinde döner.
+  const veliKategorileriTopluGetir = useCallback(async (kategoriler, id, veliNoDeger) => {
+    const sonuclar = await Promise.all(kategoriler.map((k) => veliKategoriGetir(k, id, veliNoDeger)));
+    const cikti = {};
+    kategoriler.forEach((k, i) => { cikti[k] = sonuclar[i]; });
+    return cikti;
+  }, [veliKategoriGetir]);
+
+  // İLK YÜKLEME / TAM İNDİRME: cihazda hiç kayıt yoksa, tüm kategorileri (yukarıdaki stratejiyle)
+  // ve güncel kategori damgalarını çeker. Herhangi bir noktada hata olursa (örn. güvenlik
+  // kuralları bu dar okumalara izin vermiyorsa), eski "tüm VERI_KOK'u indir" yöntemine döner —
+  // veli ekranı asla boş kalmaz, sadece o an için optimizasyon kazancı kaybedilir.
+  const veliTamVeriCek = useCallback(async (veliNoDeger) => {
+    try {
+      const id = await veliOgrenciIdBul(veliNoDeger);
+      const [veri, damgaSnap] = await Promise.all([
+        veliKategorileriTopluGetir(VELI_KATEGORI_ADLARI, id, veliNoDeger),
+        db.ref(VERI_KOK + "/_sonGuncelleme").once("value"),
+      ]);
+      return { veri, damgalar: damgaSnap.val() || {} };
+    } catch (hata) {
+      console.error("Daraltılmış veli veri çekme başarısız, tüm veriye dönülüyor:", hata);
+      const snap = await db.ref(VERI_KOK).once("value");
+      const tumVeri = dpDiziyeCevir(snap.val() || {});
+      return { veri: tumVeri, damgalar: tumVeri._sonGuncelleme || {} };
+    }
+  }, [veliOgrenciIdBul, veliKategorileriTopluGetir]);
+
   // İlk yükleme: cihazda kayıt varsa onu kullan, yoksa bir kereliğine indir.
   useEffect(() => {
     if (!yetkili || rol !== "veli") return;
@@ -5244,19 +5322,17 @@ function StudentTracker() {
         if (onbellekHam) {
           const onbellek = JSON.parse(onbellekHam);
           veliOnbellegiUygula(onbellek.veri);
-          setVeliOnbellekSonGuncelleme(onbellek.sonGuncelleme || 0);
+          veliDamgalarRef.current = onbellek.damgalar || {};
           setBaglanti("bagli");
           setLoading(false);
           return; // cihazda veri zaten var: Firebase'e hiç gidilmedi
         }
-        const snap = await db.ref(VERI_KOK).once("value");
-        const data = dpDiziyeCevir(snap.val() || {});
-        veliOnbellegiUygula(data);
-        kullanimKaydetVeKontrolEt(boyutMbTahminiHesapla(data));
-        const damga = data._sonGuncelleme || 0;
-        setVeliOnbellekSonGuncelleme(damga);
+        const { veri, damgalar } = await veliTamVeriCek(veliNo);
+        veliOnbellegiUygula(veri);
+        veliDamgalarRef.current = damgalar;
+        kullanimKaydetVeKontrolEt(boyutMbTahminiHesapla(veri));
         try {
-          localStorage.setItem(veliOnbellekAnahtari, JSON.stringify({ veri: data, sonGuncelleme: damga, zaman: Date.now() }));
+          localStorage.setItem(veliOnbellekAnahtari, JSON.stringify({ veri, damgalar, zaman: Date.now() }));
         } catch (e) { /* localStorage dolu/erişilemez olabilir, sorun değil */ }
         setBaglanti("bagli");
         setLoading(false);
@@ -5267,10 +5343,12 @@ function StudentTracker() {
       }
     });
     return () => { iptal = true; authIptal(); };
-  }, [yetkili, rol, anaId, veliOnbellegiUygula, kilitKontrolTamam, kilitDurumu]);
+  }, [yetkili, rol, anaId, veliNo, veliOnbellegiUygula, kilitKontrolTamam, kilitDurumu, veliTamVeriCek]);
 
-  // Elle "Güncelle" kontrolü: en fazla 4 saatte bir çalışır; önce küçük zaman damgasını okur,
-  // damga değişmemişse (yeni veri girilmemişse) buton bir sonraki 5 saate kadar tekrar pasif kalır.
+  // Elle "Güncelle" kontrolü: en fazla 4 saatte bir çalışır. Önce TÜM kategorilerin küçük zaman
+  // damgalarını (_sonGuncelleme) tek seferde okur (birkaç bayt), cihazdaki son bilinen damgalarla
+  // karşılaştırır. Sadece damgası değişen kategoriler yeniden indirilir; hiçbiri değişmediyse
+  // hiçbir kategori indirilmez ve buton yine pasif hale döner.
   const veliVeriKontrolEt = useCallback(async () => {
     if (!firebaseHazir || !VERI_KOK) return;
     if (kilitDurumu === "kapali") return; // kilit kapalıyken kontrol/indirme yapılmaz
@@ -5280,19 +5358,23 @@ function StudentTracker() {
     setVeliSonMesaj("");
     try {
       const damgaSnap = await db.ref(VERI_KOK + "/_sonGuncelleme").once("value");
-      const sunucuDamga = damgaSnap.val() || 0;
-      if (sunucuDamga > veliOnbellekSonGuncelleme) {
-        const snap = await db.ref(VERI_KOK).once("value");
-        const data = dpDiziyeCevir(snap.val() || {});
-        veliOnbellegiUygula(data);
-        kullanimKaydetVeKontrolEt(boyutMbTahminiHesapla(data));
-        try {
-          localStorage.setItem(veliOnbellekAnahtari, JSON.stringify({ veri: data, sonGuncelleme: sunucuDamga, zaman: simdi }));
-        } catch (e) {}
-        setVeliOnbellekSonGuncelleme(sunucuDamga);
-        setVeliSonMesaj("Yeni veriler indirildi.");
-      } else {
+      const sunucuDamgalar = damgaSnap.val() || {};
+      const cihazDamgalar = veliDamgalarRef.current || {};
+      const degisenler = VELI_KATEGORI_ADLARI.filter((k) => Number(sunucuDamgalar[k] || 0) > Number(cihazDamgalar[k] || 0));
+      if (degisenler.length === 0) {
         setVeliSonMesaj("Veriler zaten güncel, yeni bir şey yok.");
+      } else {
+        const id = await veliOgrenciIdBul(veliNo);
+        const kismiVeri = await veliKategorileriTopluGetir(degisenler, id, veliNo);
+        const birlesikVeri = { ...(veliVeriRef.current || {}), ...kismiVeri };
+        veliOnbellegiUygula(birlesikVeri);
+        kullanimKaydetVeKontrolEt(boyutMbTahminiHesapla(kismiVeri));
+        const birlesikDamgalar = { ...cihazDamgalar, ...sunucuDamgalar };
+        veliDamgalarRef.current = birlesikDamgalar;
+        try {
+          localStorage.setItem(veliOnbellekAnahtari, JSON.stringify({ veri: birlesikVeri, damgalar: birlesikDamgalar, zaman: simdi }));
+        } catch (e) {}
+        setVeliSonMesaj(`Yeni veriler indirildi (${degisenler.length} kategori güncellendi).`);
       }
     } catch (hata) {
       console.error("Veli güncelleme kontrolü hatası:", hata);
@@ -5302,7 +5384,7 @@ function StudentTracker() {
       setVeliSonKontrolZamani(simdi);
       setVeliKontrolEdiliyor(false);
     }
-  }, [veliSonKontrolZamani, veliOnbellekSonGuncelleme, veliOnbellegiUygula, veliOnbellekAnahtari, veliKontrolAnahtari, kilitDurumu]);
+  }, [veliSonKontrolZamani, veliOnbellegiUygula, veliOnbellekAnahtari, veliKontrolAnahtari, kilitDurumu, veliNo, veliOgrenciIdBul, veliKategorileriTopluGetir]);
 
   const veliButonAktif = !veliKontrolEdiliyor && (Date.now() - veliSonKontrolZamani >= VELI_KONTROL_ARALIGI_MS);
   // ================= VELİ VERİ AKIŞI SONU =================
