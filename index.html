@@ -2550,8 +2550,56 @@ function saveKey(key, value) {
   try {
     db.ref(VERI_KOK + "/" + key).set(value);
     islemKaydet(key);
+    // VELİ ÖNBELLEK KONTROLÜ: veli tarafı artık verinin tamamını sürekli dinlemiyor; bunun yerine
+    // burada güncellenen bu KÜÇÜK (birkaç bayt) zaman damgasını okuyarak "yeni veri var mı" kontrolü
+    // yapıyor. Böylece bir öğretmen/yönetici herhangi bir alanı (not, yoklama, deneme sonucu vb.)
+    // kaydettiğinde veliler için "Güncelle" butonu aktif hale gelebilir hale gelir.
+    db.ref(VERI_KOK + "/_sonGuncelleme").set(Date.now());
+    // KULLANIM SAYACI: bu yazmanın yaklaşık boyutunu aylık toplam kullanım sayacına ekler ve
+    // belirlenen eşik aşıldıysa (yönetici kendi elle tekrar açmadıkça) veri erişimini otomatik kapatır.
+    kullanimKaydetVeKontrolEt(boyutMbTahminiHesapla(value));
   } catch (e) {
     console.error("Kaydetme hatası:", key, e);
+  }
+}
+
+// Bir JS değerinin yaklaşık kaç MB olduğunu tahmin eder (JSON boyutuna göre). Kesin/faturalandırma
+// rakamı değildir, sadece uygulama içi kaba bir tahmindir.
+function boyutMbTahminiHesapla(deger) {
+  try {
+    return (JSON.stringify(deger == null ? "" : deger).length) / (1024 * 1024);
+  } catch (e) {
+    return 0;
+  }
+}
+// "YYYY-MM" biçiminde bu ayın anahtarını döner (aylık sayaç için).
+function buAyAnahtariniAl() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+}
+// Bu ayki tahmini kullanıma verilen MB'yi ekler (Firebase transaction ile güvenli biçimde) ve
+// eşik (esikMB) aşıldıysa, DURUM HÂLÂ "acik" İSE ve bu ay için daha önce otomatik kapatma
+// tetiklenmediyse, veri erişimini otomatik olarak "kapali" yapar. Yönetici daha sonra elle
+// tekrar "acik" yaparsa, aynı ay içinde (kullanım tekrar sayılsa bile) otomatik olarak tekrar
+// kapatılmaz — yönetici kararı o ay boyunca geçerli kalır.
+function kullanimKaydetVeKontrolEt(mb) {
+  if (!firebaseHazir || !VERI_KOK || !mb || mb <= 0) return;
+  try {
+    const ay = buAyAnahtariniAl();
+    const sayacRef = db.ref(VERI_KOK + "/_kullanimSayaci/" + ay);
+    sayacRef.transaction((mevcut) => (Number(mevcut) || 0) + mb).then((sonuc) => {
+      const yeniToplam = (sonuc && sonuc.snapshot ? sonuc.snapshot.val() : null) || 0;
+      return db.ref(VERI_KOK + "/_veriKilidi").once("value").then((kilitSnap) => {
+        const kilit = kilitSnap.val() || {};
+        const esik = Number(kilit.esikMB) || 8000; // varsayılan eşik: 8000 MB (~8 GB)
+        const durum = kilit.durum || "acik";
+        if (yeniToplam > esik && durum === "acik" && kilit.tetiklenenAy !== ay) {
+          return db.ref(VERI_KOK + "/_veriKilidi").update({ durum: "kapali", tetiklenenAy: ay, esikMB: esik });
+        }
+      });
+    }).catch((e) => console.error("Kullanım sayacı/kilit kontrolü hatası:", e));
+  } catch (e) {
+    console.error("Kullanım sayacı/kilit kontrolü hatası:", e);
   }
 }
 
@@ -3522,7 +3570,7 @@ function IslemGecmisiModal({ islemKayitlari, tarihFormat, islemYapanEtiket, onCl
 // öğretmenin sisteme ne zaman girip çıktığını ve şifresini ne sıklıkla kullandığını gösterir,
 // aktif bir oturum varsa gerekirse çıkışa zorlayabilir (zorlaCikis bayrağını Firebase'e yazar;
 // öğretmen tarafındaki dinleyici bunu görüp otomatik olarak çıkış yapar).
-function YonetimPaneli({ ogretmenSifreleri, updateOgretmenSifreleri, veliSifreOnek, updateVeliSifreOnek, plan, anaId }) {
+function YonetimPaneli({ ogretmenSifreleri, updateOgretmenSifreleri, veliSifreOnek, updateVeliSifreOnek, plan, anaId, veriKilidi, updateVeriKilidi, kullanimSayaci }) {
   const [gecmis, setGecmis] = useState({});
   const [yukleniyorMu, setYukleniyorMu] = useState(true);
   const [islemler, setIslemler] = useState({});
@@ -3560,6 +3608,24 @@ function YonetimPaneli({ ogretmenSifreleri, updateOgretmenSifreleri, veliSifreOn
   // okul kavramı yok) bu bölüm hiç gösterilmez.
   const [okulAdi, setOkulAdi] = useState("");
   const [okulAdiTaslak, setOkulAdiTaslak] = useState("");
+  // --- Veri Erişim Kilidi / Kullanım Kotası -----------------------------------------------------
+  // Yönetici, öğretmen ve veli tarafındaki veri erişimini elle açıp kapatabilir; ayrıca bir aylık
+  // MB eşiği belirleyebilir — bu eşik aşıldığında (ve durum hâlâ "açık" ise) erişim otomatik kapanır.
+  // ÖNEMLİ: buradaki MB rakamları uygulamanın kendi tahminidir, Firebase'in resmi/faturalandırma
+  // rakamı değildir — sadece kaba bir fikir vermek içindir; kesin rakam için Firebase Console'a bakılmalı.
+  const etkinKilit = veriKilidi || { durum: "acik", esikMB: 8000, tetiklenenAy: null };
+  const [esikTaslak, setEsikTaslak] = useState(String(etkinKilit.esikMB || 8000));
+  useEffect(() => { setEsikTaslak(String(etkinKilit.esikMB || 8000)); }, [etkinKilit.esikMB]);
+  const buAyAnahtari = (() => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); })();
+  const buAyKullanimMB = Number((kullanimSayaci || {})[buAyAnahtari] || 0);
+  const kilitDurumDegistir = (yeniDurum) => {
+    updateVeriKilidi({ ...etkinKilit, durum: yeniDurum });
+  };
+  const esikKaydet = () => {
+    const sayi = Number(esikTaslak);
+    if (!sayi || sayi <= 0) { window.alert("Lütfen geçerli bir MB değeri girin."); return; }
+    updateVeriKilidi({ ...etkinKilit, esikMB: sayi });
+  };
   const [okulAdiYukleniyor, setOkulAdiYukleniyor] = useState(true);
   const [okulAdiDurum, setOkulAdiDurum] = useState("");
   const [okulAdiHata, setOkulAdiHata] = useState("");
@@ -3754,6 +3820,35 @@ function YonetimPaneli({ ogretmenSifreleri, updateOgretmenSifreleri, veliSifreOn
   return (
     <div>
       <Baslik title="Yönetim" desc="Öğretmen şifrelerini oluşturun, giriş/çıkışları ve kullanım sıklığını izleyin." />
+
+      <h2 className="font-display text-base font-medium mb-1">Veri Erişimi ve Kullanım</h2>
+      <p className="text-xs mb-3" style={{ color: SUBTLE }}>
+        Aşağıdaki rakam, uygulamanın kendi tahminidir — Firebase'in resmi/faturalandırma rakamı değildir, sadece kaba
+        bir fikir verir. Kesin rakam için Firebase Console'a bakın. Erişimi istediğin an elle kapatıp açabilirsin;
+        belirlediğin eşik aşılırsa (ve durum "açık" ise) öğretmen ve veli erişimi otomatik olarak kapanır.
+      </p>
+      <Kart className="p-4 mb-6">
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <p className="text-sm font-semibold" style={{ color: INK }}>Bu ay tahmini kullanım: ~{buAyKullanimMB.toFixed(1)} MB</p>
+            <p className="text-xs mt-0.5" style={{ color: SUBTLE }}>
+              Öğretmen/veli veri erişimi şu an: <strong style={{ color: etkinKilit.durum === "kapali" ? RED : GREEN }}>{etkinKilit.durum === "kapali" ? "Kapalı" : "Açık"}</strong>
+              {etkinKilit.tetiklenenAy === buAyAnahtari && etkinKilit.durum === "kapali" ? " (eşik aşıldığı için otomatik kapandı)" : ""}
+            </p>
+          </div>
+          <button onClick={() => kilitDurumDegistir(etkinKilit.durum === "kapali" ? "acik" : "kapali")}
+            className="text-sm font-semibold px-4 py-2 rounded-full text-white shrink-0"
+            style={{ background: etkinKilit.durum === "kapali" ? GREEN : RED }}>
+            {etkinKilit.durum === "kapali" ? "Erişimi Aç" : "Erişimi Kapat"}
+          </button>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap pt-3" style={{ borderTop: `1px solid ${BORDER}` }}>
+          <label className="text-xs" style={{ color: SUBTLE }}>Aylık otomatik kapatma eşiği (MB):</label>
+          <input type="number" value={esikTaslak} onChange={(e) => setEsikTaslak(e.target.value)}
+            className="w-28 px-2 py-1.5 rounded-lg text-sm" style={{ border: `1px solid ${BORDER}` }} />
+          <button onClick={esikKaydet} className="text-xs font-semibold px-3 py-1.5 rounded-full" style={{ background: BG, border: `1px solid ${BORDER}`, color: INK }}>Kaydet</button>
+        </div>
+      </Kart>
 
       <h2 className="font-display text-base font-medium mb-1">Verilerini Yedekle</h2>
       <p className="text-xs mb-3" style={{ color: SUBTLE }}>
@@ -3999,6 +4094,14 @@ function ProgramSahibiPaneli({ cikisYap }) {
   const [dpAnaId, setDpAnaId] = useState("");
   const [dpVeri, setDpVeri] = useState(null);
   const [dpYukleniyor, setDpYukleniyor] = useState(false);
+  // Veri Erişimi / Kullanım Kotası: patron da, "Ders Programı" ile aynı mantıkla, önce bir okul
+  // (Ana Kullanıcı) seçer; sadece o okulun kilit durumu ve kullanım sayacı okunur (tüm okullar
+  // birden indirilmez). Yönetici sayfasındaki aynı özellik bundan bağımsız, ayrıca duruyor.
+  const [vkAnaId, setVkAnaId] = useState("");
+  const [vkVeri, setVkVeri] = useState(null); // { durum, esikMB, tetiklenenAy }
+  const [vkKullanim, setVkKullanim] = useState({});
+  const [vkYukleniyor, setVkYukleniyor] = useState(false);
+  const [vkEsikTaslak, setVkEsikTaslak] = useState("8000");
 
   useEffect(() => {
     if (!firebaseHazir) { setYukleniyor(false); setYuklemeHatasi("Firebase başlatılamadı."); return; }
@@ -4061,6 +4164,42 @@ function ProgramSahibiPaneli({ cikisYap }) {
       .catch((hata) => { console.error("Ders Programı okunamadı:", hata); setDpVeri(dpVarsayilanVeri()); })
       .finally(() => setDpYukleniyor(false));
   }, [dpAnaId]);
+
+  // Seçilen Ana Kullanıcının (okulun) veri kilidi ve bu ayki kullanım sayacını, o okulun kendi
+  // Firebase yolundan tek seferlik okur (sürekli dinlemez).
+  useEffect(() => {
+    if (!vkAnaId) { setVkVeri(null); setVkKullanim({}); return; }
+    setVkYukleniyor(true);
+    setVkVeri(null);
+    db.ref(tenantYoluAl(vkAnaId) + "/_veriKilidi").once("value")
+      .then((snap) => {
+        const v = snap.val() || { durum: "acik", esikMB: 8000, tetiklenenAy: null };
+        setVkVeri(v);
+        setVkEsikTaslak(String(v.esikMB || 8000));
+      })
+      .catch((hata) => { console.error("Veri kilidi okunamadı:", hata); setVkVeri({ durum: "acik", esikMB: 8000, tetiklenenAy: null }); });
+    db.ref(tenantYoluAl(vkAnaId) + "/_kullanimSayaci").once("value")
+      .then((snap) => setVkKullanim(snap.val() || {}))
+      .catch((hata) => { console.error("Kullanım sayacı okunamadı:", hata); setVkKullanim({}); })
+      .finally(() => setVkYukleniyor(false));
+  }, [vkAnaId]);
+
+  const vkDurumDegistir = (yeniDurum) => {
+    if (!vkAnaId || !vkVeri) return;
+    const next = { ...vkVeri, durum: yeniDurum };
+    setVkVeri(next);
+    db.ref(tenantYoluAl(vkAnaId) + "/_veriKilidi").set(next);
+  };
+  const vkEsikKaydet = () => {
+    if (!vkAnaId || !vkVeri) return;
+    const sayi = Number(vkEsikTaslak);
+    if (!sayi || sayi <= 0) { window.alert("Lütfen geçerli bir MB değeri girin."); return; }
+    const next = { ...vkVeri, esikMB: sayi };
+    setVkVeri(next);
+    db.ref(tenantYoluAl(vkAnaId) + "/_veriKilidi").set(next);
+  };
+  const vkBuAyAnahtari = (() => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); })();
+  const vkBuAyKullanimMB = Number((vkKullanim || {})[vkBuAyAnahtari] || 0);
 
   const dpPatronGuncelle = (next) => {
     setDpVeri(next);
@@ -4274,6 +4413,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
     { id: "kullanicilar", label: "Ana Kullanıcılar", icon: IconUsers, color: BLUE },
     { id: "mesajlar", label: okunmamisMesajSayisi > 0 ? `Mesajlar (${okunmamisMesajSayisi})` : "Mesajlar", icon: IconNote, color: GREEN },
     { id: "dersProgrami", label: "Ders Programı", icon: IconBook, color: "#3949AB" },
+    { id: "veriErisimi", label: "Veri Erişimi", icon: IconDashboard, color: "#00897B" },
     { id: "ayarlar", label: "Ayarlar", icon: IconID, color: PURPLE },
   ];
 
@@ -4539,6 +4679,54 @@ function ProgramSahibiPaneli({ cikisYap }) {
             </div>
           )}
 
+          {sahipTab === "veriErisimi" && (
+            <div>
+              <Baslik title="Veri Erişimi" desc="Bir Ana Kullanıcı (okul) seçin; o okulun öğretmen/veli veri erişimini buradan açıp kapatabilir, kullanım kotasını görebilirsiniz." />
+              <div className="mb-5 max-w-md">
+                <GoogleSelect value={vkAnaId} onChange={(e) => setVkAnaId(e.target.value)} className="w-full">
+                  <option value="">Bir Ana Kullanıcı seçin…</option>
+                  {anaListesi.map((a) => (
+                    <option key={a.id} value={a.id}>{a.ad ? a.ad : "Ad eklenmedi"} ({a.sifre})</option>
+                  ))}
+                </GoogleSelect>
+              </div>
+              {!vkAnaId ? (
+                <Bos mesaj="Veri erişimini yönetmek için önce bir Ana Kullanıcı seçin" />
+              ) : vkYukleniyor || !vkVeri ? (
+                <p className="text-sm" style={{ color: SUBTLE }}>Yükleniyor…</p>
+              ) : (
+                <>
+                  <p className="text-xs mb-3" style={{ color: SUBTLE }}>
+                    Aşağıdaki rakam uygulamanın kendi tahminidir — Firebase'in resmi/faturalandırma rakamı değildir,
+                    sadece kaba bir fikir verir. Kesin rakam için Firebase Console'a bakın.
+                  </p>
+                  <Kart className="p-4 mb-6 max-w-lg">
+                    <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+                      <div>
+                        <p className="text-sm font-semibold" style={{ color: INK }}>Bu ay tahmini kullanım: ~{vkBuAyKullanimMB.toFixed(1)} MB</p>
+                        <p className="text-xs mt-0.5" style={{ color: SUBTLE }}>
+                          Öğretmen/veli veri erişimi şu an: <strong style={{ color: vkVeri.durum === "kapali" ? RED : GREEN }}>{vkVeri.durum === "kapali" ? "Kapalı" : "Açık"}</strong>
+                          {vkVeri.tetiklenenAy === vkBuAyAnahtari && vkVeri.durum === "kapali" ? " (eşik aşıldığı için otomatik kapandı)" : ""}
+                        </p>
+                      </div>
+                      <button onClick={() => vkDurumDegistir(vkVeri.durum === "kapali" ? "acik" : "kapali")}
+                        className="text-sm font-semibold px-4 py-2 rounded-full text-white shrink-0"
+                        style={{ background: vkVeri.durum === "kapali" ? GREEN : RED }}>
+                        {vkVeri.durum === "kapali" ? "Erişimi Aç" : "Erişimi Kapat"}
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap pt-3" style={{ borderTop: `1px solid ${BORDER}` }}>
+                      <label className="text-xs" style={{ color: SUBTLE }}>Aylık otomatik kapatma eşiği (MB):</label>
+                      <input type="number" value={vkEsikTaslak} onChange={(e) => setVkEsikTaslak(e.target.value)}
+                        className="w-28 px-2 py-1.5 rounded-lg text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                      <button onClick={vkEsikKaydet} className="text-xs font-semibold px-3 py-1.5 rounded-full" style={{ background: BG, border: `1px solid ${BORDER}`, color: INK }}>Kaydet</button>
+                    </div>
+                  </Kart>
+                </>
+              )}
+            </div>
+          )}
+
           {sahipTab === "ayarlar" && (
             <div>
               <Baslik title="Ayarlar" desc="Patron giriş şifrenizi buradan değiştirebilirsiniz." />
@@ -4604,6 +4792,11 @@ function ProgramSahibiPaneli({ cikisYap }) {
 
 function StudentTracker() {
   const [loading, setLoading] = useState(true);
+  // VERİ ERİŞİM KİLİDİ: yönetici, kota eşiği aşıldığında (ya da elle) veli/öğretmen veri
+  // erişimini kapatabilir. kilitKontrolTamam, bu küçük kontrolün tamamlanıp tamamlanmadığını;
+  // kilitDurumu ("acik"/"kapali") güncel durumu tutar. Yönetici bu kontrolden muaftır.
+  const [kilitKontrolTamam, setKilitKontrolTamam] = useState(false);
+  const [kilitDurumu, setKilitDurumu] = useState("acik");
   const [tab, setTab] = useState("genel");
   // "Hızlı Git" araması (bkz. SesleKayitPaneli): bir hedef sekme + o sekmede otomatik açılacak öğrenci
   // bilgisini taşır. "zaman" alanı, aynı öğrenci art arda iki kez seçilse bile ilgili sekmenin bunu
@@ -4628,6 +4821,10 @@ function StudentTracker() {
   const [otoAyar, setOtoAyar] = useState({ aktif: true, gecEsik: 3 });
   const [otoGecmis, setOtoGecmis] = useState({});
   const [grades, setGrades] = useState({});
+  // VERİ KİLİDİ / KULLANIM SAYACI: yalnızca Yönetim panelinde gösterilmek ve elle
+  // Aç/Kapat + eşik ayarı yapılabilmesi için tutulan, salt-okunur (görüntüleme amaçlı) state.
+  const [veriKilidi, setVeriKilidi] = useState({ durum: "acik", esikMB: 8000, tetiklenenAy: null });
+  const [kullanimSayaci, setKullanimSayaci] = useState({});
   const [denemeler, setDenemeler] = useState([]);
   const [denemeSonuclari, setDenemeSonuclari] = useState({});
   const [denemeEkBilgi, setDenemeEkBilgi] = useState({});
@@ -4748,8 +4945,39 @@ function StudentTracker() {
     VERI_KOK = tenantYoluAl(anaId);
   }
 
+  // KİLİT ÖN-KONTROLÜ: öğretmen ve veli için, asıl veriyi indirmeden ÖNCE, sadece küçük bir
+  // "_veriKilidi/durum" alanını okur. Yönetici bu kontrolden tamamen muaftır (her zaman erişebilir).
   useEffect(() => {
-    if (!yetkili || rol === "sahip") return;
+    if (!yetkili) return;
+    if (rol === "sahip" || rol === "admin") { setKilitKontrolTamam(true); setKilitDurumu("acik"); return; }
+    if (!firebaseHazir) { setKilitKontrolTamam(true); setKilitDurumu("acik"); return; }
+    let iptal = false;
+    const authIptal = auth.onAuthStateChanged((kullanici) => {
+      if (!kullanici || iptal) return;
+      db.ref(VERI_KOK + "/_veriKilidi/durum").once("value").then((snap) => {
+        if (iptal) return;
+        setKilitDurumu(snap.val() || "acik");
+        setKilitKontrolTamam(true);
+      }).catch((hata) => {
+        console.error("Veri kilidi kontrolü hatası:", hata);
+        if (!iptal) { setKilitDurumu("acik"); setKilitKontrolTamam(true); } // okunamazsa erişim engellenmez
+      });
+    });
+    return () => { iptal = true; authIptal(); };
+  }, [yetkili, rol, anaId]);
+
+  useEffect(() => {
+    // ÖNEMLİ: veli rolü artık BU sürekli/canlı dinleyiciyi (tüm okulun verisini indirip açık
+    // tutan .on("value")) hiç kullanmıyor — kendi ayrı, önbellekli ve elle kontrol edilen
+    // veri akışı aşağıda (rol === "veli" için ayrı useEffect) tanımlı. Yönetici ve öğretmen
+    // tarafı burada HİÇBİR ŞEKİLDE değiştirilmedi, eski sistemde aynen devam ediyor.
+    if (!yetkili || rol === "sahip" || rol === "veli") return;
+    // ÖĞRETMEN İÇİN KİLİT KONTROLÜ: kilit kontrolü bitmeden ya da kilit "kapali" iken tüm okulun
+    // verisini indiren bu ağır dinleyici hiç açılmaz. Yönetici (admin) bu kontrole tabi değildir.
+    if (rol === "ogretmen") {
+      if (!kilitKontrolTamam) return;
+      if (kilitDurumu === "kapali") { setLoading(false); return; }
+    }
     if (!firebaseHazir) { setBaglanti("hata"); setLoading(false); return; }
 
     // Realtime Database kuralları girişli erişim istiyor: veri dinleyicisini ancak
@@ -4760,6 +4988,7 @@ function StudentTracker() {
       if (!kullanici || ref) return; // henüz giriş yok, ya da dinleyici zaten bağlandı
       ref = db.ref(VERI_KOK);
       let ilkYuklemeYapildi = false;
+
 
       dinleyici = ref.on("value", (snapshot) => {
       const hamVeri = snapshot.val() || {};
@@ -4932,6 +5161,8 @@ function StudentTracker() {
       setOgretmenSifreleri(data.ogretmenSifreleri || []);
       setVeliSifreOnek(data.veliSifreOnek || veliOnekVarsayilaniHesapla(anaId));
       setDersProgrami(data.dersProgrami ? dpGuvenliVeri(data.dersProgrami) : dpVarsayilanVeri());
+      setVeriKilidi(data._veriKilidi || { durum: "acik", esikMB: 8000, tetiklenenAy: null });
+      setKullanimSayaci(data._kullanimSayaci || {});
       setBaglanti("bagli");
       setLoading(false);
       }, (hata) => {
@@ -4945,7 +5176,136 @@ function StudentTracker() {
       authIptal();
       if (ref && dinleyici) ref.off("value", dinleyici);
     };
-  }, [yetkili, rol, anaId]);
+  }, [yetkili, rol, anaId, kilitKontrolTamam, kilitDurumu]);
+
+  // ================= VELİ İÇİN AYRI, ÖNBELLEKLİ VERİ AKIŞI =================
+  // Yönetici/öğretmenin aksine veli artık okulun TÜM verisini sürekli dinleyen (.on("value"))
+  // bir bağlantı açmıyor. Bunun yerine: cihazda (localStorage) daha önce kaydedilmiş veri varsa
+  // onu doğrudan gösterir (Firebase'e hiç gidilmez); yoksa bir kereliğine indirir ve saklar.
+  // Yeni veri olup olmadığını yalnızca veli "Güncelle" butonuna bastığında, en fazla 4 saatte bir
+  // kontrol eder — kontrol de tüm veriyi değil, saveKey() içinde güncellenen küçük bir zaman
+  // damgasını (_sonGuncelleme) okur; yalnızca bu damga değişmişse tüm veri yeniden indirilir.
+  // NOT: bu damga tüm okul için ortaktır (öğrenci bazlı değildir); yani herhangi bir öğrencinin
+  // verisi değişse bile buton tüm veliler için aktif hale gelir — daha ince (öğrenci bazlı)
+  // ayrım, her yazma noktasını tek tek değiştirmeyi gerektirdiği için şimdilik kapsam dışı bırakıldı.
+  const VELI_KONTROL_ARALIGI_MS = 4 * 60 * 60 * 1000; // 4 saat
+  const veliOnbellekAnahtari = "veliKarneOnbellek_" + (anaId || "varsayilan");
+  const veliKontrolAnahtari = "veliKarneSonKontrol_" + (anaId || "varsayilan");
+
+  const [veliKontrolEdiliyor, setVeliKontrolEdiliyor] = useState(false);
+  const [veliSonMesaj, setVeliSonMesaj] = useState("");
+  const [veliSonKontrolZamani, setVeliSonKontrolZamani] = useState(() => {
+    try {
+      const v = localStorage.getItem(veliKontrolAnahtari);
+      return v ? Number(v) : 0;
+    } catch (e) { return 0; }
+  });
+  const [veliOnbellekSonGuncelleme, setVeliOnbellekSonGuncelleme] = useState(0);
+
+  // Önbellekteki/indirilen veliyi, veli ekranının ihtiyaç duyduğu state'lere uygular.
+  const veliOnbellegiUygula = useCallback((data) => {
+    const d = data || {};
+    setStudents(d.students || []);
+    setDenemeler(d.denemeler || []);
+    setDenemeSonuclari(d.denemeSonuclari || {});
+    setDenemeEkBilgi(d.denemeEkBilgi || {});
+    setAttendance(d.attendance || {});
+    setDersYoklama(d.dersYoklama || {});
+    setGrades(d.grades || {});
+    setSoruCozum(d.soruCozum || {});
+    setKitapKontrol(d.kitapKontrol || {});
+    setKocDevam(d.kocDevam || {});
+    setDavranisNotlari(d.davranisNotlari || {});
+    setKocluklOgrenciler(d.kocluklOgrenciler || []);
+    setKoclukNotlari(d.koclukNotlari || {});
+    setKoclukGorusleri(d.koclukGorusleri || {});
+    setDersIciOdev(d.dersIciOdev || {});
+    setDersIciKitap(d.dersIciKitap || {});
+    setDersIciKatilim(d.dersIciKatilim || {});
+    setKonuTakip(d.konuTakip || {});
+    setOdevler(d.odevler || {});
+    setOdevKitaplari(d.odevKitaplari || {});
+    setKazanimListesi(d.kazanimListesi || {});
+  }, []);
+
+  // İlk yükleme: cihazda kayıt varsa onu kullan, yoksa bir kereliğine indir.
+  useEffect(() => {
+    if (!yetkili || rol !== "veli") return;
+    // VERİ ERİŞİM KİLİDİ: kontrol tamamlanmadan ya da kilit "kapali" iken veli tarafı cihazdaki
+    // önbelleğe bile bakmaz, Firebase'e de hiç gitmez — doğrudan erişim kapalı ekranı gösterilir.
+    if (!kilitKontrolTamam) return;
+    if (kilitDurumu === "kapali") { setLoading(false); return; }
+    if (!firebaseHazir) { setBaglanti("hata"); setLoading(false); return; }
+    let iptal = false;
+    const authIptal = auth.onAuthStateChanged(async (kullanici) => {
+      if (!kullanici || iptal) return;
+      try {
+        const onbellekHam = localStorage.getItem(veliOnbellekAnahtari);
+        if (onbellekHam) {
+          const onbellek = JSON.parse(onbellekHam);
+          veliOnbellegiUygula(onbellek.veri);
+          setVeliOnbellekSonGuncelleme(onbellek.sonGuncelleme || 0);
+          setBaglanti("bagli");
+          setLoading(false);
+          return; // cihazda veri zaten var: Firebase'e hiç gidilmedi
+        }
+        const snap = await db.ref(VERI_KOK).once("value");
+        const data = dpDiziyeCevir(snap.val() || {});
+        veliOnbellegiUygula(data);
+        kullanimKaydetVeKontrolEt(boyutMbTahminiHesapla(data));
+        const damga = data._sonGuncelleme || 0;
+        setVeliOnbellekSonGuncelleme(damga);
+        try {
+          localStorage.setItem(veliOnbellekAnahtari, JSON.stringify({ veri: data, sonGuncelleme: damga, zaman: Date.now() }));
+        } catch (e) { /* localStorage dolu/erişilemez olabilir, sorun değil */ }
+        setBaglanti("bagli");
+        setLoading(false);
+      } catch (hata) {
+        console.error("Veli veri okuma hatası:", hata);
+        setBaglanti("hata");
+        setLoading(false);
+      }
+    });
+    return () => { iptal = true; authIptal(); };
+  }, [yetkili, rol, anaId, veliOnbellegiUygula, kilitKontrolTamam, kilitDurumu]);
+
+  // Elle "Güncelle" kontrolü: en fazla 4 saatte bir çalışır; önce küçük zaman damgasını okur,
+  // damga değişmemişse (yeni veri girilmemişse) buton bir sonraki 5 saate kadar tekrar pasif kalır.
+  const veliVeriKontrolEt = useCallback(async () => {
+    if (!firebaseHazir || !VERI_KOK) return;
+    if (kilitDurumu === "kapali") return; // kilit kapalıyken kontrol/indirme yapılmaz
+    const simdi = Date.now();
+    if (simdi - veliSonKontrolZamani < VELI_KONTROL_ARALIGI_MS) return;
+    setVeliKontrolEdiliyor(true);
+    setVeliSonMesaj("");
+    try {
+      const damgaSnap = await db.ref(VERI_KOK + "/_sonGuncelleme").once("value");
+      const sunucuDamga = damgaSnap.val() || 0;
+      if (sunucuDamga > veliOnbellekSonGuncelleme) {
+        const snap = await db.ref(VERI_KOK).once("value");
+        const data = dpDiziyeCevir(snap.val() || {});
+        veliOnbellegiUygula(data);
+        kullanimKaydetVeKontrolEt(boyutMbTahminiHesapla(data));
+        try {
+          localStorage.setItem(veliOnbellekAnahtari, JSON.stringify({ veri: data, sonGuncelleme: sunucuDamga, zaman: simdi }));
+        } catch (e) {}
+        setVeliOnbellekSonGuncelleme(sunucuDamga);
+        setVeliSonMesaj("Yeni veriler indirildi.");
+      } else {
+        setVeliSonMesaj("Veriler zaten güncel, yeni bir şey yok.");
+      }
+    } catch (hata) {
+      console.error("Veli güncelleme kontrolü hatası:", hata);
+      setVeliSonMesaj("Kontrol sırasında bir hata oluştu.");
+    } finally {
+      try { localStorage.setItem(veliKontrolAnahtari, String(simdi)); } catch (e) {}
+      setVeliSonKontrolZamani(simdi);
+      setVeliKontrolEdiliyor(false);
+    }
+  }, [veliSonKontrolZamani, veliOnbellekSonGuncelleme, veliOnbellegiUygula, veliOnbellekAnahtari, veliKontrolAnahtari, kilitDurumu]);
+
+  const veliButonAktif = !veliKontrolEdiliyor && (Date.now() - veliSonKontrolZamani >= VELI_KONTROL_ARALIGI_MS);
+  // ================= VELİ VERİ AKIŞI SONU =================
 
   const updateStudents = useCallback((next) => {
     setStudents(next);
@@ -4969,6 +5329,7 @@ function StudentTracker() {
   const updateOtoAyar = useCallback((next) => { setOtoAyar(next); saveKey("otoAyar", next); }, []);
   const updateOtoGecmis = useCallback((next) => { setOtoGecmis(next); saveKey("otoGecmis", next); }, []);
   const updateGrades = useCallback((next) => { setGrades(next); saveKey("grades", next); }, []);
+  const updateVeriKilidi = useCallback((next) => { setVeriKilidi(next); saveKey("_veriKilidi", next); }, []);
   const updateDenemeSonuclari = useCallback((next) => { setDenemeSonuclari(next); saveKey("denemeSonuclari", next); }, []);
   const updateDenemeler = useCallback((next) => { setDenemeler(next); saveKey("denemeler", next); }, []);
   const updateDenemeEkBilgi = useCallback((next) => { setDenemeEkBilgi(next); saveKey("denemeEkBilgi", next); }, []);
@@ -5103,6 +5464,23 @@ function StudentTracker() {
     );
   }
 
+  // VERİ ERİŞİM KİLİDİ: yönetici kapatmışsa (elle ya da kota eşiği aşıldığı için otomatik),
+  // öğretmen ve veli sisteme girebilir ama hiçbir veri göremez/giremez. Yönetici (admin) muaf.
+  if ((rol === "ogretmen" || rol === "veli") && kilitDurumu === "kapali") {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-6" style={{ background: BG }}>
+        <div className="max-w-sm w-full text-center p-8 rounded-3xl" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
+          <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: `${ORANGE}1A` }}>
+            <IconClock size={26} color={ORANGE} />
+          </div>
+          <p className="font-display text-base font-semibold mb-2" style={{ color: INK }}>Veri erişimi geçici olarak kapalı</p>
+          <p className="text-sm mb-6" style={{ color: SUBTLE }}>Yönetici veri erişimini geçici olarak durdurdu. Erişim tekrar açıldığında bilgilerine ulaşabileceksin.</p>
+          <button onClick={cikisYap} className="text-sm font-medium px-4 py-2 rounded-full" style={{ background: BG, color: SUBTLE, border: `1px solid ${BORDER}` }}>Çıkış Yap</button>
+        </div>
+      </div>
+    );
+  }
+
   if (rol === "veli") {
     return <VeliUygulama veliNo={veliNo} students={students} grades={grades} dersYoklama={dersYoklama} attendance={attendance}
       denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
@@ -5112,7 +5490,8 @@ function StudentTracker() {
       konuTakip={konuTakip} updateKonuTakip={updateKonuTakip} updateKonuTakipKayit={updateKonuTakipKayit}
       odevler={odevler} odevKitaplari={odevKitaplari}
       kazanimListesi={kazanimListesi}
-      baglanti={baglanti} cikisYap={cikisYap} />;
+      baglanti={baglanti} cikisYap={cikisYap}
+      veliButonAktif={veliButonAktif} veliKontrolEdiliyor={veliKontrolEdiliyor} veliSonMesaj={veliSonMesaj} veliVeriKontrolEt={veliVeriKontrolEt} />;
   }
 
   return (
@@ -5169,7 +5548,7 @@ function StudentTracker() {
           {tab === "karne" && <Karne students={students} grades={grades} attendance={attendance} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim} dersIciDefter={dersIciDefter} dersIciOkumaKitabi={dersIciOkumaKitabi} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} konuTakip={konuTakip} odevler={odevler} kazanimListesi={kazanimListesi} setTab={setTab} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "sinifKitapligi" && <SinifKitapligi students={students} siniflar={siniflar} kayitlar={sinifKitapligi} updateKayitlar={updateSinifKitapligi} kitaplar={kitapKatalogu} updateKitaplar={updateKitapKatalogu} kullaniciAdi={kullaniciAdi} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "iletisim" && <Iletisim students={students} updateStudents={updateStudents} veliSifreOnek={veliSifreOnek} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
-          {tab === "yonetim" && rol === "admin" && <YonetimPaneli ogretmenSifreleri={ogretmenSifreleri} updateOgretmenSifreleri={updateOgretmenSifreleri} veliSifreOnek={veliSifreOnek} updateVeliSifreOnek={updateVeliSifreOnek} plan={plan} anaId={anaId} />}
+          {tab === "yonetim" && rol === "admin" && <YonetimPaneli ogretmenSifreleri={ogretmenSifreleri} updateOgretmenSifreleri={updateOgretmenSifreleri} veliSifreOnek={veliSifreOnek} updateVeliSifreOnek={updateVeliSifreOnek} plan={plan} anaId={anaId} veriKilidi={veriKilidi} updateVeriKilidi={updateVeriKilidi} kullanimSayaci={kullanimSayaci} />}
         </main>
       </div>
     </div>
@@ -8995,54 +9374,81 @@ function SinifKitapligi({ students, siniflar, kayitlar, updateKayitlar, kitaplar
   // Kitap kataloğu: "Kitap Ekle" ile bağımsız olarak eklenen kitaplar (kitaplar), artı geçmişte
   // (katalog özelliği gelmeden önce) kayıtlara serbestçe yazılmış kitap adları — ikisi birleştirilip
   // öneri listesi olarak sunulur, böylece eski veri kaybolmaz.
+  // Katalogdaki her kitap ya düz metindir (= tüm sınıflar için geçerli; eski kayıtlar böyle) ya da
+  // { ad, sinif } nesnesidir (= yalnızca o sınıfa ait kitap). İkisi de burada tek biçime çevrilir.
+  const kitapKatalogGirdileri = useMemo(
+    () => (kitaplar || [])
+      .map((k) => (typeof k === "string" ? { ad: k, sinif: "" } : { ad: (k && k.ad) || "", sinif: (k && k.sinif) || "" }))
+      .filter((e) => e.ad),
+    [kitaplar]
+  );
+  const kitapAnahtar = (e) => `${e.sinif}::${e.ad}`;
+  const kitapSerilestir = (liste) => liste.map((e) => (e.sinif ? { ad: e.ad, sinif: e.sinif } : e.ad));
   const kitapOnerileri = useMemo(() => {
-    const set = new Set();
-    (kitaplar || []).forEach((k) => { if (k) set.add(k); });
-    (kayitlar || []).forEach((k) => { if (k.kitapAdi) set.add(k.kitapAdi); });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, "tr"));
-  }, [kitaplar, kayitlar]);
+    const liste = kitapKatalogGirdileri.map((e) => ({ ...e }));
+    const adlar = new Set(liste.map((e) => e.ad));
+    (kayitlar || []).forEach((k) => { if (k.kitapAdi && !adlar.has(k.kitapAdi)) { adlar.add(k.kitapAdi); liste.push({ ad: k.kitapAdi, sinif: "" }); } });
+    return liste.sort((a, b) => a.ad.localeCompare(b.ad, "tr") || a.sinif.localeCompare(b.sinif, "tr"));
+  }, [kitapKatalogGirdileri, kayitlar]);
 
   // --- Kitaplığım paneli (kitap kataloğu ekle/sil/düzenle) ---
   const [kitapKatalogAcik, setKitapKatalogAcik] = useState(false);
   const [yeniKitapAdiKatalog, setYeniKitapAdiKatalog] = useState("");
   const [kitapKatalogArama, setKitapKatalogArama] = useState("");
-  const [kitapDuzenlenenAd, setKitapDuzenlenenAd] = useState(null); // düzenlenmekte olan kitabın mevcut adı
+  const [yeniKitapSinifi, setYeniKitapSinifi] = useState(""); // "" = tüm sınıflar
+  const [kitapDuzenlenenAd, setKitapDuzenlenenAd] = useState(null); // düzenlenmekte olan girdinin anahtarı (sınıf::ad)
   const [kitapDuzenlenenYeniAd, setKitapDuzenlenenYeniAd] = useState("");
+  const [kitapDuzenlenenYeniSinif, setKitapDuzenlenenYeniSinif] = useState("");
   const kitapKatalogFiltreli = useMemo(() => {
     const q = kitapKatalogArama.trim().toLocaleLowerCase("tr");
     if (!q) return kitapOnerileri;
-    return kitapOnerileri.filter((k) => k.toLocaleLowerCase("tr").includes(q));
+    return kitapOnerileri.filter((e) => e.ad.toLocaleLowerCase("tr").includes(q));
   }, [kitapOnerileri, kitapKatalogArama]);
   const kitapKatalogEkle = (ad) => {
     const deger = (ad || "").trim();
     if (!deger) return;
-    if ((kitaplar || []).some((k) => k.toLocaleLowerCase("tr") === deger.toLocaleLowerCase("tr"))) {
-      if (!window.confirm(`"${deger}" isimli bir kitap zaten kayıtlı. Yine de eklemek istiyor musunuz?`)) return;
+    const sinif = yeniKitapSinifi || "";
+    if (kitapKatalogGirdileri.some((e) => e.ad.toLocaleLowerCase("tr") === deger.toLocaleLowerCase("tr") && e.sinif === sinif)) {
+      if (!window.confirm(`"${deger}" isimli bir kitap ${sinif ? sinif + " için" : "tüm sınıflarda"} zaten kayıtlı. Yine de eklemek istiyor musunuz?`)) return;
     }
-    updateKitaplar([...(kitaplar || []), deger]);
+    updateKitaplar([...(kitaplar || []), sinif ? { ad: deger, sinif } : deger]);
     setYeniKitapAdiKatalog("");
   };
-  const kitapKatalogSil = (hedefAd) => {
-    if (!window.confirm(`"${hedefAd}" kitabını kataloğdan silmek istediğinize emin misiniz? (Bu kitabın daha önceki ödünç kayıtları etkilenmez.)`)) return;
-    updateKitaplar((kitaplar || []).filter((k) => k !== hedefAd));
+  const kitapKatalogSil = (hedef) => {
+    if (!window.confirm(`"${hedef.ad}" kitabını${hedef.sinif ? ` (${hedef.sinif})` : ""} kataloğdan silmek istediğinize emin misiniz? (Bu kitabın daha önceki ödünç kayıtları etkilenmez.)`)) return;
+    const anahtar = kitapAnahtar(hedef);
+    updateKitaplar(kitapSerilestir(kitapKatalogGirdileri.filter((e) => kitapAnahtar(e) !== anahtar)));
   };
-  const kitapDuzenlemeyeBasla = (hedefAd) => { setKitapDuzenlenenAd(hedefAd); setKitapDuzenlenenYeniAd(hedefAd); };
+  const kitapDuzenlemeyeBasla = (hedef) => {
+    setKitapDuzenlenenAd(kitapAnahtar(hedef));
+    setKitapDuzenlenenYeniAd(hedef.ad);
+    setKitapDuzenlenenYeniSinif(hedef.sinif || "");
+  };
   const kitapYenidenAdlandirKaydet = () => {
-    const eskiAd = kitapDuzenlenenAd;
+    const hedef = kitapOnerileri.find((e) => kitapAnahtar(e) === kitapDuzenlenenAd);
     const yeniAd = kitapDuzenlenenYeniAd.trim();
-    if (!yeniAd) return;
-    if (yeniAd !== eskiAd && (kitaplar || []).some((k) => k.toLocaleLowerCase("tr") === yeniAd.toLocaleLowerCase("tr"))) {
-      window.alert("Bu isimde bir kitap zaten var.");
+    const yeniSinif = kitapDuzenlenenYeniSinif || "";
+    if (!hedef || !yeniAd) return;
+    const degisti = yeniAd !== hedef.ad || yeniSinif !== hedef.sinif;
+    if (degisti && kitapKatalogGirdileri.some((e) => kitapAnahtar(e) !== kitapDuzenlenenAd && e.ad.toLocaleLowerCase("tr") === yeniAd.toLocaleLowerCase("tr") && e.sinif === yeniSinif)) {
+      window.alert("Bu isimde bir kitap bu sınıf kapsamında zaten var.");
       return;
     }
-    if (yeniAd !== eskiAd) {
-      updateKitaplar((kitaplar || []).map((k) => (k === eskiAd ? yeniAd : k)));
-      // Bu kitabı daha önce alan öğrencilerin kayıtlarını da yeni isimle güncelle.
-      const etkilenen = (kayitlar || []).some((k) => k.kitapAdi === eskiAd);
-      if (etkilenen) updateKayitlar((kayitlar || []).map((k) => (k.kitapAdi === eskiAd ? { ...k, kitapAdi: yeniAd } : k)));
-      if (kitapAdi === eskiAd) setKitapAdi(yeniAd);
+    if (degisti) {
+      const katalogdaVar = kitapKatalogGirdileri.some((e) => kitapAnahtar(e) === kitapDuzenlenenAd);
+      const guncel = katalogdaVar
+        ? kitapKatalogGirdileri.map((e) => (kitapAnahtar(e) === kitapDuzenlenenAd ? { ad: yeniAd, sinif: yeniSinif } : e))
+        : [...kitapKatalogGirdileri, { ad: yeniAd, sinif: yeniSinif }];
+      updateKitaplar(kitapSerilestir(guncel));
+      if (yeniAd !== hedef.ad) {
+        // Bu kitabı daha önce alan öğrencilerin kayıtlarını da yeni isimle güncelle
+        // (sınıfa özel kitapsa yalnızca o sınıfın kayıtları).
+        const etkilenir = (k) => k.kitapAdi === hedef.ad && (!hedef.sinif || k.sinif === hedef.sinif);
+        if ((kayitlar || []).some(etkilenir)) updateKayitlar((kayitlar || []).map((k) => (etkilenir(k) ? { ...k, kitapAdi: yeniAd } : k)));
+        if (kitapAdi === hedef.ad) setKitapAdi(yeniAd);
+      }
     }
-    setKitapDuzenlenenAd(null); setKitapDuzenlenenYeniAd("");
+    setKitapDuzenlenenAd(null); setKitapDuzenlenenYeniAd(""); setKitapDuzenlenenYeniSinif("");
   };
 
   // Kitap Adı seçim kutusu: Öğrenci kutusuyla aynı mantık — tek bir buton olarak açılır, içinde
@@ -9055,16 +9461,22 @@ function SinifKitapligi({ students, siniflar, kayitlar, updateKayitlar, kitaplar
     document.addEventListener("mousedown", disariTikla);
     return () => document.removeEventListener("mousedown", disariTikla);
   }, []);
+  // Formdaki sınıf seçimine göre: tüm sınıflara açık kitaplar + yalnızca seçili sınıfa ait kitaplar.
+  const kitapFormOnerileri = useMemo(() => {
+    const set = new Set();
+    kitapOnerileri.forEach((e) => { if (!e.sinif || e.sinif === formSinif) set.add(e.ad); });
+    return Array.from(set);
+  }, [kitapOnerileri, formSinif]);
   const kitapEslesenler = useMemo(() => {
     const q = kitapAdi.trim().toLocaleLowerCase("tr");
-    if (!q) return kitapOnerileri;
-    return kitapOnerileri.filter((k) => k.toLocaleLowerCase("tr").includes(q));
-  }, [kitapOnerileri, kitapAdi]);
+    if (!q) return kitapFormOnerileri;
+    return kitapFormOnerileri.filter((k) => k.toLocaleLowerCase("tr").includes(q));
+  }, [kitapFormOnerileri, kitapAdi]);
   const kitapTamEslesiyor = useMemo(() => {
     const q = kitapAdi.trim().toLocaleLowerCase("tr");
     if (!q) return true; // kutu boşken "yeni kitap kaydı" butonu gösterilmez
-    return kitapOnerileri.some((k) => k.toLocaleLowerCase("tr") === q);
-  }, [kitapOnerileri, kitapAdi]);
+    return kitapFormOnerileri.some((k) => k.toLocaleLowerCase("tr") === q);
+  }, [kitapFormOnerileri, kitapAdi]);
   const kitapSec = (k) => {
     setKitapAdi(k);
     setKitapKutuAcik(false);
@@ -9104,7 +9516,7 @@ function SinifKitapligi({ students, siniflar, kayitlar, updateKayitlar, kitaplar
       zaman: Date.now(),
     };
     updateKayitlar([yeniKayit, ...(kayitlar || [])]);
-    if (!(kitaplar || []).some((k) => k.toLocaleLowerCase("tr") === temizKitapAdi.toLocaleLowerCase("tr"))) {
+    if (!kitapKatalogGirdileri.some((e) => e.ad.toLocaleLowerCase("tr") === temizKitapAdi.toLocaleLowerCase("tr"))) {
       updateKitaplar([...(kitaplar || []), temizKitapAdi]);
     }
     setKitapAdi("");
@@ -9166,10 +9578,11 @@ function SinifKitapligi({ students, siniflar, kayitlar, updateKayitlar, kitaplar
         </button>
         {kitapKatalogAcik && (
           <div className="mt-3">
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex flex-wrap items-center gap-2 mb-3">
               <GoogleInput value={yeniKitapAdiKatalog} onChange={(e) => setYeniKitapAdiKatalog(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") kitapKatalogEkle(yeniKitapAdiKatalog); }}
-                placeholder="Yeni kitap adı (örn. Küçük Prens)" className="flex-1 min-w-0" />
+                placeholder="Yeni kitap adı (örn. Küçük Prens)" className="flex-1 min-w-[10rem]" />
+              <SinifSecici value={yeniKitapSinifi} onChange={setYeniKitapSinifi} hepsi={true} siniflar={siniflar} className="shrink-0" />
               <button type="button" onClick={() => kitapKatalogEkle(yeniKitapAdiKatalog)} disabled={!yeniKitapAdiKatalog.trim()}
                 className="px-4 py-2.5 rounded-full text-sm font-medium text-white shrink-0 flex items-center gap-1 disabled:opacity-40"
                 style={{ background: "#92400E" }}>
@@ -9192,18 +9605,23 @@ function SinifKitapligi({ students, siniflar, kayitlar, updateKayitlar, kitaplar
                     <p className="text-xs px-1 py-1" style={{ color: SUBTLE }}>Eşleşen kitap yok.</p>
                   ) : (
                     kitapKatalogFiltreli.map((k) =>
-                      kitapDuzenlenenAd === k ? (
-                        <div key={k} className="flex items-center gap-1 px-1 py-1 rounded-md" style={{ background: BG }}>
+                      kitapDuzenlenenAd === kitapAnahtar(k) ? (
+                        <div key={kitapAnahtar(k)} className="flex flex-wrap items-center gap-1 px-1 py-1 rounded-md" style={{ background: BG }}>
                           <GoogleInput autoFocus value={kitapDuzenlenenYeniAd} onChange={(e) => setKitapDuzenlenenYeniAd(e.target.value)}
                             onKeyDown={(e) => { if (e.key === "Enter") kitapYenidenAdlandirKaydet(); if (e.key === "Escape") setKitapDuzenlenenAd(null); }}
-                            className="flex-1 !py-1 !text-sm" />
+                            className="flex-1 min-w-[8rem] !py-1 !text-sm" />
+                          <SinifSecici value={kitapDuzenlenenYeniSinif} onChange={setKitapDuzenlenenYeniSinif} hepsi={true} siniflar={siniflar} className="!py-1 !text-sm" />
                           <button type="button" onClick={kitapYenidenAdlandirKaydet} className="p-1.5 rounded-full hover:bg-white" title="Kaydet"><IconCheck size={14} color={GREEN} /></button>
                           <button type="button" onClick={() => setKitapDuzenlenenAd(null)} className="p-1.5 rounded-full hover:bg-white" title="Vazgeç"><IconX size={14} color={SUBTLE} /></button>
                         </div>
                       ) : (
-                        <div key={k} className="w-full flex items-center gap-1 px-2 py-1.5 rounded-md hover:bg-gray-50">
+                        <div key={kitapAnahtar(k)} className="w-full flex items-center gap-1 px-2 py-1.5 rounded-md hover:bg-gray-50">
                           <IconBook size={14} color="#92400E" className="shrink-0" />
-                          <span className="flex-1 text-sm truncate">{k}</span>
+                          <span className="flex-1 text-sm truncate">{k.ad}</span>
+                          <span className="text-[11px] px-2 py-0.5 rounded-full shrink-0"
+                            style={{ background: k.sinif ? `${BLUE}14` : BG, color: k.sinif ? BLUE : SUBTLE }}>
+                            {k.sinif || "Tüm Sınıflar"}
+                          </span>
                           <button type="button" onClick={() => kitapDuzenlemeyeBasla(k)} className="p-1.5 rounded-full hover:bg-gray-100 shrink-0" title="Yeniden adlandır"><IconEdit size={14} color={SUBTLE} /></button>
                           <button type="button" onClick={() => kitapKatalogSil(k)} className="p-1.5 rounded-full hover:bg-gray-100 shrink-0" title="Sil"><IconTrash size={14} color={RED} /></button>
                         </div>
@@ -11052,7 +11470,7 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
 // --- Veli Girişi: öğretmenin tam uygulamasından tamamen ayrı, sabit tek ekranlı, salt-okunur bir
 // kabuk. Veli hiçbir veriyi değiştiremez; sadece kendi öğrencisinin no'sunu veya adını yazarak
 // arar ve o öğrenciye ait yoklama, not ve deneme bilgilerini görüntüler.
-function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, konuTakip, updateKonuTakip, updateKonuTakipKayit, odevler, odevKitaplari, kazanimListesi, baglanti, cikisYap }) {
+function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, konuTakip, updateKonuTakip, updateKonuTakipKayit, odevler, odevKitaplari, kazanimListesi, baglanti, cikisYap, veliButonAktif, veliKontrolEdiliyor, veliSonMesaj, veliVeriKontrolEt }) {
   // Veli varsayılan olarak öğrenci karnesini görür; "Konu Takibi" butonuna basınca evde
   // çalışılan/bitirilen konuları kendisi girip görebileceği ayrı bir ekrana, "Deneme Takibi"
   // butonuna basınca da okulda yapılan denemede hangi dersten hangi kazanımı yanlış yaptığını
@@ -11130,6 +11548,21 @@ function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denem
                 <IconChevronRight size={16} color="#fff" />
               </span>
             </button>
+            <div className="w-full flex items-center justify-between gap-3 p-4 rounded-2xl mb-6" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold" style={{ color: INK }}>Veriler {veliButonAktif ? "kontrol edilebilir" : "güncel"}</p>
+                <p className="text-xs mt-0.5" style={{ color: SUBTLE }}>
+                  {veliKontrolEdiliyor ? "Kontrol ediliyor…" : veliSonMesaj ? veliSonMesaj : veliButonAktif ? "Öğretmen/yönetici yeni veri girdiyse indirebilirsin." : "En fazla 4 saatte bir tekrar kontrol edebilirsin."}
+                </p>
+              </div>
+              <button onClick={veliVeriKontrolEt} disabled={!veliButonAktif}
+                className="shrink-0 text-xs font-semibold px-3.5 py-2 rounded-full"
+                style={veliButonAktif
+                  ? { background: BLUE, color: "#fff", cursor: "pointer" }
+                  : { background: BG, color: SUBTLE, cursor: "not-allowed", border: `1px solid ${BORDER}` }}>
+                {veliKontrolEdiliyor ? "Kontrol ediliyor…" : "Güncelle"}
+              </button>
+            </div>
             <VeliOgrenciGoster veliNo={veliNo} students={students} grades={grades} dersYoklama={dersYoklama} attendance={attendance}
               denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
               soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} koclukGorusleri={koclukGorusleri}
