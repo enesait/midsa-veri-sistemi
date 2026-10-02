@@ -14387,7 +14387,7 @@ function Denemeler({ students, updateStudents, denemeler, denemeSonuclari, updat
       </div>
       {altSekme === "giris" && <DenemeGiris students={students} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} denemeSecili={denemeSecili} setDenemeSecili={setDenemeSecili} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre} altSekme={altSekme} setAltSekme={setAltSekme} siniflar={siniflar} />}
       {altSekme === "iceAktar" && <DenemeIceAktar students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} setAltSekme={setAltSekme} setDenemeSecili={setDenemeSecili} />}
-      {altSekme === "ilk50" && <DenemeIlk50 students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} />}
+      {altSekme === "ilk50" && <DenemeIlk50 students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} onTumSonuclar={() => setAltSekme("giris")} />}
       {altSekme === "sinif" && <DenemeSinifKiyas students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} />}
       {altSekme === "ders" && <DenemeDersKiyas students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} />}
       {altSekme === "gelisim" && <BransGelisimGrafik students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} />}
@@ -16190,7 +16190,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
   );
 }
 
-function DenemeIlk50({ students, denemeler, denemeSonuclari, denemeEkBilgi }) {
+function DenemeIlk50({ students, denemeler, denemeSonuclari, denemeEkBilgi, onTumSonuclar }) {
   // Sadece içinde en az bir sonuç girilmiş denemeler seçilebilir olsun.
   const denemelerVerili = useMemo(
     () => denemeler.filter((d) => denemeSonuclari[d.id] && Object.keys(denemeSonuclari[d.id]).length > 0),
@@ -16268,6 +16268,11 @@ function DenemeIlk50({ students, denemeler, denemeSonuclari, denemeEkBilgi }) {
           </GoogleSelect>
         ) : null}
         <SubeMultiSecici value={subeFiltre} onChange={setSubeFiltre} className="sm:w-48" />
+        <button type="button" onClick={onTumSonuclar}
+          className="ml-auto flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold shrink-0"
+          style={{ background: `${ORANGE}14`, color: ORANGE, border: `1px solid ${ORANGE}55` }}>
+          <IconUsers size={16} color={ORANGE} />Tüm Sonuçlar
+        </button>
         <span className="text-xs" style={{ color: SUBTLE }}>{seciliDenemeAd ? `${seciliDenemeAd} sonuçlarına göre puanı (yoksa neti) en yüksek ilk 50 öğrenci${subeFiltre.length ? ` (${subeFiltre.join(", ")} şubeleri)` : ""}` : ""}</span>
       </Kart>
       {siralama.length === 0 ? <Bos mesaj="Bu denemede henüz sonuç girilmedi" ipucu='"Sonuç Gir" sekmesinden deneme sonucu girin.' /> : (
