@@ -434,6 +434,22 @@ function denemeDersBilgisi(deneme, seviye) {
   return { dersler: DERSLER, dersSoru: DERS_SORU };
 }
 const netHesapla = (dogru, yanlis) => dogru - yanlis / 3;
+// Branş denemeleri (tek dersli), denemeler listesinde tur:"brans" ile işaretlenir; bu alanı olmayan
+// tüm eski denemeler "genel" sayılır. Genel istatistikler yalnızca genel denemeleri kullanır.
+const bransDenemesiMi = (d) => !!d && d.tur === "brans";
+// Filtrelenmiş bir liste (yalnızca genel ya da yalnızca branş) üzerinde yapılan değişikliği, tam
+// listeye karşı türdeki denemelere dokunmadan geri yazar.
+const denemeListesiBirlestir = (tum, yeniListe, bransMod) => {
+  const yeniHarita = new Map((yeniListe || []).map((d) => [d.id, d]));
+  const kullanilan = new Set();
+  const sonuc = [];
+  (tum || []).forEach((d) => {
+    if (bransDenemesiMi(d) !== bransMod) { sonuc.push(d); return; }
+    if (yeniHarita.has(d.id)) { sonuc.push(yeniHarita.get(d.id)); kullanilan.add(d.id); }
+  });
+  (yeniListe || []).forEach((d) => { if (!kullanilan.has(d.id)) sonuc.push(d); });
+  return sonuc;
+};
 // Bir dersin doğru/yanlış kaydından net hesaplar; kayıt yoksa null döner (bkz. aşağıdaki not).
 const dersSonucuNeti = (kayit) => (kayit ? netHesapla(Number(kayit.dogru) || 0, Number(kayit.yanlis) || 0) : null);
 // Bir ders kaydının GERÇEKTEN girilmiş sayılıp sayılmayacağını belirler: doğru veya yanlış
@@ -5568,9 +5584,12 @@ function StudentTracker() {
     );
   }
 
+  const genelDenemeler = denemeler.filter((d) => !bransDenemesiMi(d));
+  const bransDenemeleri = denemeler.filter(bransDenemesiMi);
+  const updateGenelDenemeler = (next) => updateDenemeler(denemeListesiBirlestir(denemeler, next, false));
   if (rol === "veli") {
     return <VeliUygulama veliNo={veliNo} students={students} grades={grades} dersYoklama={dersYoklama} attendance={attendance}
-      denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
+      denemeler={genelDenemeler} bransDenemeleri={bransDenemeleri} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
       soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} koclukGorusleri={koclukGorusleri}
       dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim}
       davranisNotlari={davranisNotlari}
@@ -5628,11 +5647,11 @@ function StudentTracker() {
           {tab === "kocluk" && <Kocluk kocluklSiniflar={kocluklSiniflar} updateKocluklSiniflar={updateKocluklSiniflar} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} students={students} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum} kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} kocDevam={kocDevam} updateKocDevam={updateKocDevam} koclukNotlari={koclukNotlari} updateKoclukNotlari={updateKoclukNotlari} koclukGorusleri={koclukGorusleri} updateKoclukGorusleri={updateKoclukGorusleri} kazanimListesi={kazanimListesi} updateKazanimListesi={updateKazanimListesi} koclukKazanimTakip={koclukKazanimTakip} updateKoclukKazanimTakip={updateKoclukKazanimTakip} plan={plan} kullaniciAdi={kullaniciAdi} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "dersIci" && <DersIci students={students} siniflar={siniflar} dersIciDersler={dersIciDersler} updateDersIciDersler={updateDersIciDersler} dersIciOdev={dersIciOdev} updateDersIciOdev={updateDersIciOdev} dersIciKitap={dersIciKitap} updateDersIciKitap={updateDersIciKitap} dersIciKatilim={dersIciKatilim} updateDersIciKatilim={updateDersIciKatilim} dersIciDefter={dersIciDefter} updateDersIciDefter={updateDersIciDefter} dersIciOkumaKitabi={dersIciOkumaKitabi} updateDersIciOkumaKitabi={updateDersIciOkumaKitabi} kullaniciAdi={kullaniciAdi} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "denemeler" && <Denemeler students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} />}
-          {tab === "optik" && (plan === "premium" ? <OptikOkuyucuSayfa students={students} updateStudents={updateStudents} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} siniflar={siniflar} /> : <PremiumKilit baslik="Optik Okuyucu" telegramKullaniciAdi={telegramKullaniciAdi} />)}
+          {tab === "optik" && (plan === "premium" ? <OptikOkuyucuSayfa students={students} updateStudents={updateStudents} denemeler={genelDenemeler} updateDenemeler={updateGenelDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} siniflar={siniflar} /> : <PremiumKilit baslik="Optik Okuyucu" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "sinifTemizligi" && (plan === "premium" ? <SinifTemizligi sinifTemizligi={sinifTemizligi} updateSinifTemizligi={updateSinifTemizligi} /> : <PremiumKilit baslik="Sınıf Temizliği" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "sinifNobet" && <SinifNobet sinifNobet={sinifNobet} updateSinifNobet={updateSinifNobet} />}
           {tab === "odevler" && <Odevler students={students} odevler={odevler} updateOdevler={updateOdevler} odevKitaplari={odevKitaplari} updateOdevKitaplari={updateOdevKitaplari} konuTakip={konuTakip} kullaniciAdi={kullaniciAdi} />}
-          {tab === "karne" && <Karne students={students} grades={grades} attendance={attendance} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim} dersIciDefter={dersIciDefter} dersIciOkumaKitabi={dersIciOkumaKitabi} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} konuTakip={konuTakip} odevler={odevler} kazanimListesi={kazanimListesi} setTab={setTab} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
+          {tab === "karne" && <Karne students={students} grades={grades} attendance={attendance} denemeler={genelDenemeler} bransDenemeleri={bransDenemeleri} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim} dersIciDefter={dersIciDefter} dersIciOkumaKitabi={dersIciOkumaKitabi} davranisUyarilari={davranisUyarilari} updateDavranisUyarilari={updateDavranisUyarilari} davranisNotlari={davranisNotlari} konuTakip={konuTakip} odevler={odevler} kazanimListesi={kazanimListesi} setTab={setTab} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "sinifKitapligi" && <SinifKitapligi students={students} siniflar={siniflar} kayitlar={sinifKitapligi} updateKayitlar={updateSinifKitapligi} kitaplar={kitapKatalogu} updateKitaplar={updateKitapKatalogu} kullaniciAdi={kullaniciAdi} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "iletisim" && <Iletisim students={students} updateStudents={updateStudents} veliSifreOnek={veliSifreOnek} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "yonetim" && rol === "admin" && <YonetimPaneli ogretmenSifreleri={ogretmenSifreleri} updateOgretmenSifreleri={updateOgretmenSifreleri} veliSifreOnek={veliSifreOnek} updateVeliSifreOnek={updateVeliSifreOnek} plan={plan} anaId={anaId} veriKilidi={veriKilidi} updateVeriKilidi={updateVeriKilidi} kullanimSayaci={kullanimSayaci} />}
@@ -10234,7 +10253,43 @@ function Notlar({ students, grades, updateGrades, hizliGit, hizliGitTuketildi })
 
 const VELI_TUM_DENEME_ID = "__VELI_TUM__";
 
-function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, dersIciOdev, dersIciKitap, dersIciKatilim, dersIciDefter, dersIciOkumaKitabi, davranisUyarilari, updateDavranisUyarilari, davranisNotlari, konuTakip, odevler, kazanimListesi, setTab, hizliGit, hizliGitTuketildi }) {
+// Karne ve Veli Girişi'nde, genel deneme istatistiklerinden ayrı gösterilen "Branş Denemeleri" bölümü.
+function BransDenemeleriBolumu({ ogrenci, bransDenemeleri, denemeSonuclari }) {
+  if (!ogrenci || !bransDenemeleri || bransDenemeleri.length === 0) return null;
+  const satirlar = bransDenemeleri
+    .map((d) => {
+      const sonuc = denemeSonuclari?.[d.id]?.[ogrenci.id];
+      const ders = d.ders || (d.dersAyarlari && Object.values(d.dersAyarlari)[0]?.dersler?.[0]);
+      const k = sonuc && ders ? sonuc[ders] : null;
+      if (!k) return null;
+      const dogru = Number(k.dogru) || 0;
+      const yanlis = Number(k.yanlis) || 0;
+      const soru = (d.dersAyarlari && Object.values(d.dersAyarlari)[0]?.dersSoru?.[ders]) || DERS_SORU[ders] || null;
+      return { id: d.id, ad: d.ad, ders, dogru, yanlis, net: netHesapla(dogru, yanlis), soru };
+    })
+    .filter(Boolean);
+  if (satirlar.length === 0) return null;
+  return (
+    <>
+      <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconTarget size={17} color={PURPLE} />Branş Denemeleri</h2>
+      <Kart className="mb-6">
+        {satirlar.map((r, i) => (
+          <div key={r.id} className="flex items-center gap-3 px-4 py-2.5" style={{ borderBottom: i < satirlar.length - 1 ? `1px solid ${BORDER}` : "none" }}>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{r.ad}</p>
+              <p className="text-[11px]" style={{ color: SUBTLE }}>{r.ders} · {r.dogru} doğru · {r.yanlis} yanlış</p>
+            </div>
+            <span className="text-sm font-semibold px-3 py-1 rounded-full shrink-0" style={{ color: PURPLE, background: `${PURPLE}14` }}>
+              {r.net.toFixed(2)}{r.soru ? ` / ${r.soru}` : ""} net
+            </span>
+          </div>
+        ))}
+      </Kart>
+    </>
+  );
+}
+
+function Karne({ students, grades, attendance, denemeler, bransDenemeleri = [], denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, dersIciOdev, dersIciKitap, dersIciKatilim, dersIciDefter, dersIciOkumaKitabi, davranisUyarilari, updateDavranisUyarilari, davranisNotlari, konuTakip, odevler, kazanimListesi, setTab, hizliGit, hizliGitTuketildi }) {
   const [noGiris, setNoGiris] = useState("");
   const [ogrenci, setOgrenci] = useState(null);
   const [hata, setHata] = useState("");
@@ -11435,6 +11490,8 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
             )}
           </Kart>
 
+          <BransDenemeleriBolumu ogrenci={ogrenci} bransDenemeleri={bransDenemeleri} denemeSonuclari={denemeSonuclari} />
+
           {ogrenciDenemeleri.length > 0 && (
             <>
               <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconChart size={17} color={ORANGE} />Girilen Tüm Deneme Sonuçları</h2>
@@ -11557,7 +11614,7 @@ function Karne({ students, grades, attendance, denemeler, denemeSonuclari, denem
 // --- Veli Girişi: öğretmenin tam uygulamasından tamamen ayrı, sabit tek ekranlı, salt-okunur bir
 // kabuk. Veli hiçbir veriyi değiştiremez; sadece kendi öğrencisinin no'sunu veya adını yazarak
 // arar ve o öğrenciye ait yoklama, not ve deneme bilgilerini görüntüler.
-function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, konuTakip, updateKonuTakip, updateKonuTakipKayit, odevler, odevKitaplari, kazanimListesi, baglanti, cikisYap, veliButonAktif, veliKontrolEdiliyor, veliSonMesaj, veliVeriKontrolEt }) {
+function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, bransDenemeleri = [], denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, konuTakip, updateKonuTakip, updateKonuTakipKayit, odevler, odevKitaplari, kazanimListesi, baglanti, cikisYap, veliButonAktif, veliKontrolEdiliyor, veliSonMesaj, veliVeriKontrolEt }) {
   // Veli varsayılan olarak öğrenci karnesini görür; "Konu Takibi" butonuna basınca evde
   // çalışılan/bitirilen konuları kendisi girip görebileceği ayrı bir ekrana, "Deneme Takibi"
   // butonuna basınca da okulda yapılan denemede hangi dersten hangi kazanımı yanlış yaptığını
@@ -11651,7 +11708,7 @@ function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denem
               </button>
             </div>
             <VeliOgrenciGoster veliNo={veliNo} students={students} grades={grades} dersYoklama={dersYoklama} attendance={attendance}
-              denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
+              denemeler={denemeler} bransDenemeleri={bransDenemeleri} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi}
               soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} koclukGorusleri={koclukGorusleri}
               dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim} davranisNotlari={davranisNotlari}
               kazanimListesi={kazanimListesi} konuTakip={konuTakip} updateKonuTakipKayit={updateKonuTakipKayit}
@@ -12854,7 +12911,7 @@ function akilliKocOnerileriUret({ devamOzet, ogrenciDenemeleri, tumDenemelerOrta
   return oneriler;
 }
 
-function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, denemeler, denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, kazanimListesi, konuTakip, updateKonuTakipKayit, odevler, onOdevlereGit }) {
+function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, denemeler, bransDenemeleri = [], denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, kazanimListesi, konuTakip, updateKonuTakipKayit, odevler, onOdevlereGit }) {
   const ogrenci = useMemo(() => students.find((s) => s.no === veliNo) || null, [students, veliNo]);
   const [denemeSecili, setDenemeSecili] = useState("");
   const denemeSeciliTumMu = denemeSecili === VELI_TUM_DENEMELER_ID;
@@ -13385,6 +13442,7 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
         )}
       </Kart>
 
+      <BransDenemeleriBolumu ogrenci={ogrenci} bransDenemeleri={bransDenemeleri} denemeSonuclari={denemeSonuclari} />
       {ogrenciDenemeleri.length > 0 && (
         <>
           <Kart className="p-5">
@@ -14374,7 +14432,33 @@ function VeliOdevler({ veliNo, students, odevler, odevKitaplari, konuTakip, upda
   );
 }
 
-function Denemeler({ students, updateStudents, denemeler, denemeSonuclari, updateDenemeSonuclari, updateDenemeler, denemeEkBilgi, updateDenemeEkBilgi, plan, telegramKullaniciAdi, siniflar }) {
+// Genel / Branş denemesi geçişi: seçilen türe göre yalnızca o türdeki denemeler alt bileşenlere
+// verilir; böylece İlk 50, karşılaştırmalar ve gelişim grafiği iki tür arasında karışmaz.
+function Denemeler(props) {
+  const [denemeTuru, setDenemeTuru] = useState("genel");
+  const bransMod = denemeTuru === "brans";
+  const tumDenemeler = props.denemeler;
+  const gorunenDenemeler = tumDenemeler.filter((d) => bransDenemesiMi(d) === bransMod);
+  const guncelle = (next) => props.updateDenemeler(denemeListesiBirlestir(tumDenemeler, next, bransMod));
+  return (
+    <div>
+      <div className="flex gap-2 mb-4">
+        {[["genel", "Genel Denemeler"], ["brans", "Branş Denemeleri"]].map(([id, etiket]) => {
+          const aktif = denemeTuru === id;
+          return (
+            <button key={id} onClick={() => setDenemeTuru(id)}
+              className="px-4 py-2 rounded-full text-sm font-semibold"
+              style={{ background: aktif ? ORANGE : SURFACE, color: aktif ? "#fff" : INK, border: `1px solid ${aktif ? ORANGE : BORDER}` }}>
+              {etiket}
+            </button>
+          );
+        })}
+      </div>
+      <DenemelerIc key={denemeTuru} {...props} denemeler={gorunenDenemeler} updateDenemeler={guncelle} denemeTuru={denemeTuru} />
+    </div>
+  );
+}
+function DenemelerIc({ students, updateStudents, denemeler, denemeSonuclari, updateDenemeSonuclari, updateDenemeler, denemeEkBilgi, updateDenemeEkBilgi, plan, telegramKullaniciAdi, siniflar, denemeTuru }) {
   const [altSekme, setAltSekme] = useState("giris");
   // denemeler dizisine yeni denemeler sona eklenir, bu yüzden en son yapılan deneme dizinin son
   // elemanıdır — sekmeye girildiğinde varsayılan olarak o seçili gelsin diye [0] yerine son eleman alınır.
@@ -14412,7 +14496,7 @@ function Denemeler({ students, updateStudents, denemeler, denemeSonuclari, updat
         })}
       </div>
       {altSekme === "giris" && <DenemeGiris students={students} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} denemeSecili={denemeSecili} setDenemeSecili={setDenemeSecili} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre} altSekme={altSekme} setAltSekme={setAltSekme} siniflar={siniflar} />}
-      {altSekme === "iceAktar" && <DenemeIceAktar students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} setAltSekme={setAltSekme} setDenemeSecili={setDenemeSecili} />}
+      {altSekme === "iceAktar" && <DenemeIceAktar denemeTuru={denemeTuru} students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} setAltSekme={setAltSekme} setDenemeSecili={setDenemeSecili} />}
       {altSekme === "ilk50" && <DenemeIlk50 students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} onTumSonuclar={() => setAltSekme("giris")} />}
       {altSekme === "sinif" && <DenemeSinifKiyas students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} />}
       {altSekme === "ders" && <DenemeDersKiyas students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} />}
@@ -15472,7 +15556,10 @@ function DenemeDersAyarlariModal({ denemeler, updateDenemeler, siniflar, baslang
   );
 }
 
-function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, updateDenemeSonuclari, updateDenemeler, denemeEkBilgi, updateDenemeEkBilgi, plan, telegramKullaniciAdi, siniflar = SINIFLAR, setAltSekme, setDenemeSecili }) {
+function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, updateDenemeSonuclari, updateDenemeler, denemeEkBilgi, updateDenemeEkBilgi, plan, telegramKullaniciAdi, siniflar = SINIFLAR, setAltSekme, setDenemeSecili, denemeTuru }) {
+  const bransMod = denemeTuru === "brans";
+  const [bransDers, setBransDers] = useState(DERSLER[4]);
+  const [bransSoru, setBransSoru] = useState(String(DERS_SORU[DERSLER[4]] || 20));
   const [tur, setTur] = useState(null); // "excel" | "pdf"
   const [dosyaAdi, setDosyaAdi] = useState("");
   const [yukleniyor, setYukleniyor] = useState(false);
@@ -15886,7 +15973,15 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
         return;
       }
     }
-    const yeni = { id: uid(), ad, olusturmaZamani: Date.now() };
+    const soruSayisi = Math.max(1, parseInt(bransSoru, 10) || DERS_SORU[bransDers] || 20);
+    // Branş denemesi: tek dersli; her sınıf seviyesi için ders listesi tek derse sabitlenir, böylece
+    // PDF/Excel içe aktarma ve manuel giriş yalnızca bu dersi okur/sorar.
+    const yeni = bransMod
+      ? {
+          id: uid(), ad, olusturmaZamani: Date.now(), tur: "brans", ders: bransDers,
+          dersAyarlari: Object.fromEntries([5, 6, 7, 8, 9, 10, 11, 12].map((sv) => [String(sv), { dersler: [bransDers], dersSoru: { [bransDers]: soruSayisi } }])),
+        }
+      : { id: uid(), ad, olusturmaZamani: Date.now() };
     updateDenemeler([...denemeler, yeni]);
     setHedefDenemeId(yeni.id);
     setYeniDenemeAdi("");
@@ -16014,8 +16109,16 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
           <DenemeDersAyarlariModal denemeler={denemeler} updateDenemeler={updateDenemeler} siniflar={siniflar}
             baslangicDenemeId={hedefDenemeId} baslangicSeviye={seviye} onClose={() => setDersAyarlariAcik(false)} />
         )}
-        <div className="flex items-center gap-2 mb-5">
-          <GoogleInput value={yeniDenemeAdi} onChange={(e) => setYeniDenemeAdi(e.target.value)} placeholder="Yeni deneme adı (ör. 21. Deneme)" className="flex-1 max-w-xs"
+        <div className="flex items-center gap-2 mb-5 flex-wrap">
+          {bransMod && (
+            <>
+              <GoogleSelect value={bransDers} onChange={(e) => { setBransDers(e.target.value); setBransSoru(String(DERS_SORU[e.target.value] || 20)); }} className="sm:w-56">
+                {DERSLER.map((d) => <option key={d} value={d}>{d}</option>)}
+              </GoogleSelect>
+              <GoogleInput value={bransSoru} onChange={(e) => setBransSoru(e.target.value.replace(/\D/g, ""))} placeholder="Soru" className="w-20" />
+            </>
+          )}
+          <GoogleInput value={yeniDenemeAdi} onChange={(e) => setYeniDenemeAdi(e.target.value)} placeholder={bransMod ? "Yeni branş denemesi adı (ör. Matematik 1)" : "Yeni deneme adı (ör. 21. Deneme)"} className="flex-1 max-w-xs"
             onKeyDown={(e) => e.key === "Enter" && yeniDenemeOlustur()} />
           <button onClick={yeniDenemeOlustur} className="px-3 py-2 rounded-full text-xs font-medium text-white shrink-0" style={{ background: SUBTLE }}>
             <IconPlus size={14} color="#fff" style={{ display: "inline-block", marginRight: 4, verticalAlign: "-2px" }} />Deneme Ekle
@@ -16875,11 +16978,13 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
             <h2 className="font-display text-xl font-medium">{seciliOgrenci?.ad}</h2>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-base font-semibold px-4 py-1.5 rounded-full" style={{ color: ORANGE, background: `${ORANGE}14` }}>Toplam Net: {toplamNet.toFixed(2)} / {aktifToplamSoru}</span>
+              {!bransDenemesiMi(seciliDeneme) && (
               <label className="flex items-center gap-1.5 text-base font-semibold px-4 py-1.5 rounded-full" style={{ color: PURPLE, background: `${PURPLE}14` }}>
                 Puan:
                 <input type="number" step="0.001" value={puanForm} onChange={(e) => setPuanForm(e.target.value)} placeholder="—"
                   className="w-24 bg-transparent outline-none font-semibold" style={{ color: PURPLE }} />
               </label>
+              )}
             </div>
           </div>
           <Kart className="p-4 mb-6">
