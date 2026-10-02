@@ -10255,6 +10255,7 @@ const VELI_TUM_DENEME_ID = "__VELI_TUM__";
 
 // Karne ve Veli Girişi'nde, genel deneme istatistiklerinden ayrı gösterilen "Branş Denemeleri" bölümü.
 function BransDenemeleriBolumu({ ogrenci, bransDenemeleri, denemeSonuclari }) {
+  const [seciliDers, setSeciliDers] = useState(""); // "" = kapalı (hiçbir ders seçili değil)
   if (!ogrenci || !bransDenemeleri || bransDenemeleri.length === 0) return null;
   const satirlar = bransDenemeleri
     .map((d) => {
@@ -10269,22 +10270,33 @@ function BransDenemeleriBolumu({ ogrenci, bransDenemeleri, denemeSonuclari }) {
     })
     .filter(Boolean);
   if (satirlar.length === 0) return null;
+  const dersler = Array.from(new Set(satirlar.map((r) => r.ders)));
+  const gorunen = seciliDers ? satirlar.filter((r) => r.ders === seciliDers) : [];
   return (
     <>
       <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconTarget size={17} color={PURPLE} />Branş Denemeleri</h2>
-      <Kart className="mb-6">
-        {satirlar.map((r, i) => (
-          <div key={r.id} className="flex items-center gap-3 px-4 py-2.5" style={{ borderBottom: i < satirlar.length - 1 ? `1px solid ${BORDER}` : "none" }}>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{r.ad}</p>
-              <p className="text-[11px]" style={{ color: SUBTLE }}>{r.ders} · {r.dogru} doğru · {r.yanlis} yanlış</p>
+      <div className="mb-3">
+        <GoogleSelect value={seciliDers} onChange={(e) => setSeciliDers(e.target.value)} className="sm:w-64">
+          <option value="">Ders seçin…</option>
+          {dersler.map((d) => <option key={d} value={d}>{d}</option>)}
+        </GoogleSelect>
+      </div>
+      {gorunen.length > 0 && (
+        <Kart className="mb-6">
+          {gorunen.map((r, i) => (
+            <div key={r.id} className="flex items-center gap-3 px-4 py-2.5" style={{ borderBottom: i < gorunen.length - 1 ? `1px solid ${BORDER}` : "none" }}>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{r.ad}</p>
+                <p className="text-[11px]" style={{ color: SUBTLE }}>{r.ders} · {r.dogru} doğru · {r.yanlis} yanlış</p>
+              </div>
+              <span className="text-sm font-semibold px-3 py-1 rounded-full shrink-0" style={{ color: PURPLE, background: `${PURPLE}14` }}>
+                {r.net.toFixed(2)}{r.soru ? ` / ${r.soru}` : ""} net
+              </span>
             </div>
-            <span className="text-sm font-semibold px-3 py-1 rounded-full shrink-0" style={{ color: PURPLE, background: `${PURPLE}14` }}>
-              {r.net.toFixed(2)}{r.soru ? ` / ${r.soru}` : ""} net
-            </span>
-          </div>
-        ))}
-      </Kart>
+          ))}
+        </Kart>
+      )}
+      {gorunen.length === 0 && <div className="mb-6" />}
     </>
   );
 }
