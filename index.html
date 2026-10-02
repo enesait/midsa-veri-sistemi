@@ -11884,6 +11884,7 @@ function kazanimBankasindaDersDoluMu(kazanimListesi, dersAdi) {
 // gruplayarak göstermek için. konuTakip'in Karne karşılığı olan KarneKonuTakip ile aynı mantık.
 function KarneDenemeKazanimTakip({ ogrenci, kazanimListesi, konuTakip, denemeler }) {
   const [seciliDenemeId, setSeciliDenemeId] = useState(null);
+  const [seciliDersAd, setSeciliDersAd] = useState(null);
 
   const denemeVerisi = useMemo(() => (ogrenci ? denemeKazanimVerisiOku(konuTakip, ogrenci.id) : {}), [ogrenci, konuTakip]);
   const denemeAdi = useCallback((id) => ((denemeler || []).find((d) => d.id === id) || {}).ad || "Silinmiş/Bilinmeyen Deneme", [denemeler]);
@@ -11903,7 +11904,7 @@ function KarneDenemeKazanimTakip({ ogrenci, kazanimListesi, konuTakip, denemeler
   }, [ogrenci, denemeVerisi, denemeler]);
 
   useEffect(() => {
-    if (seciliDenemeId && !denemeIdListesi.includes(seciliDenemeId)) setSeciliDenemeId(null);
+    if (seciliDenemeId && seciliDenemeId !== "__tum__" && !denemeIdListesi.includes(seciliDenemeId)) setSeciliDenemeId(null);
   }, [denemeIdListesi]);
 
   if (!ogrenci) return null;
@@ -11916,17 +11917,25 @@ function KarneDenemeKazanimTakip({ ogrenci, kazanimListesi, konuTakip, denemeler
     );
   }
 
-  const aktifDenemeId = (seciliDenemeId && denemeIdListesi.includes(seciliDenemeId)) ? seciliDenemeId : denemeIdListesi[0];
+  const TUM_DENEMELER = "__tum__";
+  const tumMu = seciliDenemeId === TUM_DENEMELER;
+  const aktifDenemeId = tumMu ? TUM_DENEMELER : ((seciliDenemeId && denemeIdListesi.includes(seciliDenemeId)) ? seciliDenemeId : denemeIdListesi[0]);
+  const kapsamIdleri = tumMu ? denemeIdListesi : [aktifDenemeId];
 
-  // Seçili denemede en az bir işaretli kazanımı olan TÜM dersler (ders seçimi yapmadan hepsi gösterilir).
+  // Seçili kapsamda (tek deneme ya da tüm denemeler) en az bir işaretli kazanımı olan dersler.
   const sinifDuzeyi = sinifDuzeyiCoz(ogrenci && ogrenci.sinif);
   const dersSonuclari = KONU_TAKIP_DERSLERI
     .map((d) => {
       const denemelerHaritasi = denemeVerisi[d.ad] || {};
-      const kazanimlar = kazanimBankasiOku(kazanimListesi, d.ad, sinifDuzeyi).filter((k) => (denemelerHaritasi[aktifDenemeId] || {})[k.id]);
-      return { ders: d, kazanimlar };
+      const bank = kazanimBankasiOku(kazanimListesi, d.ad, sinifDuzeyi);
+      const denemeBazli = kapsamIdleri
+        .map((did) => ({ denemeId: did, kazanimlar: bank.filter((k) => (denemelerHaritasi[did] || {})[k.id]) }))
+        .filter((x) => x.kazanimlar.length > 0);
+      return { ders: d, denemeBazli };
     })
-    .filter((x) => x.kazanimlar.length > 0);
+    .filter((x) => x.denemeBazli.length > 0);
+
+  const aktifDers = dersSonuclari.find((x) => x.ders.ad === seciliDersAd) || dersSonuclari[0];
 
   return (
     <Kart className="p-5 mb-6">
@@ -11935,6 +11944,7 @@ function KarneDenemeKazanimTakip({ ogrenci, kazanimListesi, konuTakip, denemeler
           <IconTarget size={15} color={RED} />
         </span>
         <GoogleSelect value={aktifDenemeId} onChange={(e) => setSeciliDenemeId(e.target.value)} className="max-w-[240px]">
+          {denemeIdListesi.length > 1 && <option value={TUM_DENEMELER}>Tüm Denemeler</option>}
           {denemeIdListesi.map((denemeId) => (
             <option key={denemeId} value={denemeId}>{denemeAdi(denemeId)}</option>
           ))}
@@ -11943,18 +11953,34 @@ function KarneDenemeKazanimTakip({ ogrenci, kazanimListesi, konuTakip, denemeler
       {dersSonuclari.length === 0 ? (
         <p className="text-sm" style={{ color: SUBTLE }}>Bu deneme için veli tarafından henüz işaretleme yapılmamış.</p>
       ) : (
-        <div className="flex flex-col gap-4">
-          {dersSonuclari.map(({ ders, kazanimlar }) => (
-            <div key={ders.ad}>
-              <p className="text-sm font-semibold mb-1.5" style={{ color: ders.renk }}>{ders.ad}</p>
-              <div className="flex flex-wrap gap-2">
-                {kazanimlar.map((k) => (
-                  <span key={k.id} className="text-xs font-medium px-2.5 py-1 rounded-full" style={{ color: RED, background: `${RED}14` }}>{k.ad}</span>
-                ))}
+        <>
+          <div className="flex flex-wrap gap-2 mb-4">
+            {dersSonuclari.map(({ ders }) => (
+              <button key={ders.ad} onClick={() => setSeciliDersAd(ders.ad)}
+                className="px-3 py-1.5 rounded-full text-xs font-medium"
+                style={{
+                  background: aktifDers.ders.ad === ders.ad ? `${ders.renk}1A` : "transparent",
+                  color: aktifDers.ders.ad === ders.ad ? ders.renk : SUBTLE,
+                  border: `1px solid ${aktifDers.ders.ad === ders.ad ? ders.renk : BORDER}`,
+                }}>
+                {ders.ad}
+              </button>
+            ))}
+          </div>
+          <p className="text-sm font-semibold mb-2" style={{ color: aktifDers.ders.renk }}>{aktifDers.ders.ad}</p>
+          <div className="flex flex-col gap-3">
+            {aktifDers.denemeBazli.map(({ denemeId, kazanimlar }) => (
+              <div key={denemeId}>
+                {tumMu && <p className="text-xs font-semibold mb-1.5" style={{ color: SUBTLE }}>{denemeAdi(denemeId)}</p>}
+                <div className="flex flex-wrap gap-2">
+                  {kazanimlar.map((k) => (
+                    <span key={k.id} className="text-xs font-medium px-2.5 py-1 rounded-full" style={{ color: RED, background: `${RED}14` }}>{k.ad}</span>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </>
       )}
     </Kart>
   );
