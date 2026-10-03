@@ -7230,7 +7230,9 @@ async function ogrenciSinifListesiPdfOku(dosya) {
   const buffer = await dosya.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
   const satirlar = [];
+  const sayfaAraliklari = []; // her sayfanın satirlar içindeki [başlangıç, bitiş) aralığı
   for (let s = 1; s <= pdf.numPages; s++) {
+    const sayfaBaslangic = satirlar.length;
     const sayfa = await pdf.getPage(s);
     const icerik = await sayfa.getTextContent();
     // Satırları y konumuna göre grupluyoruz. NOT: Math.round(y) ile "aynı satır" sayma yöntemi
@@ -7270,6 +7272,7 @@ async function ogrenciSinifListesiPdfOku(dosya) {
       satir = satir.replace(/\s+/g, " ").trim();
       if (satir) satirlar.push(satir);
     });
+    sayfaAraliklari.push([sayfaBaslangic, satirlar.length]);
   }
   const tamMetin = satirlar.join("\n");
 
@@ -7280,24 +7283,36 @@ async function ogrenciSinifListesiPdfOku(dosya) {
     if (SINIFLAR.includes(aday)) varsayilanSinif = aday;
   }
 
+  // TÜM OKUL PDF'İ: her sayfanın başlığındaki "5. Sınıf / A Şubesi" bilgisi ayrı ayrı okunur ve o
+  // sayfadaki öğrenciler o şubeye atanır. Başlığı okunamayan bir sayfa (ör. aynı şubenin ikinci
+  // sayfası) bir önceki sayfanın şubesini devralır. Hiç başlık yoksa sinif "" kalır (tek şubeli
+  // eski kullanımda üstteki "Eklenecek şube" seçimi geçerlidir).
   const ogrenciler = [];
-  satirlar.forEach((satir) => {
-    // Örn: "1 153 ABDULLAH MİRAN GÖKÇE Erkek" → S.No, Öğrenci No, Ad Soyad, Cinsiyet
-    let m = satir.match(/^(\d+)\s+(\d+)\s+(.+?)\s+(Erkek|K[ıi]z)\s*$/i);
-    let no, ad;
-    if (m) {
-      no = m[2].trim();
-      ad = m[3].trim().replace(/\s+/g, " ");
-    } else {
-      // Yedek: y-toleransına rağmen S.No hâlâ ayrı bir satıra düştüyse (örn. çok sıkı bir PDF
-      // düzeninde), en azından "Öğrenci No Ad Soyad Cinsiyet" biçimindeki satırı yakala.
-      const m2 = satir.match(/^(\d+)\s+(.+?)\s+(Erkek|K[ıi]z)\s*$/i);
-      if (!m2) return;
-      no = m2[1].trim();
-      ad = m2[2].trim().replace(/\s+/g, " ");
-    }
-    if (!ad || ad.length < 2) return;
-    ogrenciler.push({ ad, no });
+  let oncekiSinif = "";
+  sayfaAraliklari.forEach(([bas, bit]) => {
+    const sayfaSatirlari = satirlar.slice(bas, bit);
+    const sayfaMetni = sayfaSatirlari.join("\n");
+    const sm = sayfaMetni.match(/(\d+)\s*\.\s*S[ıİiı]n[ıİiı]f\s*\/\s*([A-ZÇĞİÖŞÜ])\s*Ş[uü]besi/i);
+    const sayfaSinifi = sm ? `${sm[1]}-${sm[2].toLocaleUpperCase("tr")}` : oncekiSinif;
+    if (sayfaSinifi) oncekiSinif = sayfaSinifi;
+    sayfaSatirlari.forEach((satir) => {
+      // Örn: "1 153 ABDULLAH MİRAN GÖKÇE Erkek" → S.No, Öğrenci No, Ad Soyad, Cinsiyet
+      let m = satir.match(/^(\d+)\s+(\d+)\s+(.+?)\s+(Erkek|K[ıi]z)\s*$/i);
+      let no, ad;
+      if (m) {
+        no = m[2].trim();
+        ad = m[3].trim().replace(/\s+/g, " ");
+      } else {
+        // Yedek: y-toleransına rağmen S.No hâlâ ayrı bir satıra düştüyse (örn. çok sıkı bir PDF
+        // düzeninde), en azından "Öğrenci No Ad Soyad Cinsiyet" biçimindeki satırı yakala.
+        const m2 = satir.match(/^(\d+)\s+(.+?)\s+(Erkek|K[ıi]z)\s*$/i);
+        if (!m2) return;
+        no = m2[1].trim();
+        ad = m2[2].trim().replace(/\s+/g, " ");
+      }
+      if (!ad || ad.length < 2) return;
+      ogrenciler.push({ ad, no, sinif: sayfaSinifi });
+    });
   });
   return { ogrenciler, varsayilanSinif };
 }
@@ -7421,6 +7436,11 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
   const pdfTumunuSecToggle = (deger) => {
     setPdfOnizleme((p) => p.map((o) => ({ ...o, dahil: deger })));
   };
+  // Önizlemede birden fazla şube varsa (tüm okul PDF'i) şube seçimi satırlardan gelir.
+  const pdfCokSinif = !!pdfOnizleme && new Set(pdfOnizleme.map((o) => o.sinif).filter(Boolean)).size > 1;
+  const pdfSinifTumunuSecToggle = (sinifAdi, deger) => {
+    setPdfOnizleme((p) => p.map((o) => (o.sinif === sinifAdi ? { ...o, dahil: deger } : o)));
+  };
   const pdfIceAktar = () => {
     if (!pdfOnizleme) return;
     const secilenler = pdfOnizleme.filter((o) => o.dahil && o.ad.trim());
@@ -7430,15 +7450,23 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
     let atlanan = 0;
     const kalanKontenjan = plan !== "premium" ? Math.max(0, KISITLI_OGRENCI_LIMITI - students.length) : Infinity;
     let kontenjanDoldu = false;
+    let sinifsiz = 0;
+    const hedefler = new Set();
     secilenler.forEach((o) => {
-      const anahtar = `${o.ad.trim().toLocaleLowerCase("tr")}||${(o.no || "").trim()}||${pdfSinif}`;
+      // Tüm okul PDF'inde her öğrenci kendi sayfasındaki şubeye gider; şubesi okunamayan (ya da
+      // sistemde tanımlı olmayan) satırlar, tek şubeli kullanımdaki "Eklenecek şube" seçimine düşer.
+      const hedef = o.sinif && siniflar.includes(o.sinif) ? o.sinif : (pdfCokSinif ? "" : pdfSinif);
+      if (!hedef) { sinifsiz++; return; }
+      const anahtar = `${o.ad.trim().toLocaleLowerCase("tr")}||${(o.no || "").trim()}||${hedef}`;
       if (mevcutAnahtarlar.has(anahtar)) { atlanan++; return; }
       if (yeniler.length >= kalanKontenjan) { kontenjanDoldu = true; return; }
       mevcutAnahtarlar.add(anahtar);
-      yeniler.push({ id: uid(), ad: o.ad.trim(), sinif: pdfSinif, no: (o.no || "").trim() });
+      hedefler.add(hedef);
+      yeniler.push({ id: uid(), ad: o.ad.trim(), sinif: hedef, no: (o.no || "").trim() });
     });
     if (yeniler.length > 0) updateStudents([...students, ...yeniler]);
-    setPdfBasari(`${yeniler.length} öğrenci "${pdfSinif}" şubesine eklendi.` + (atlanan > 0 ? ` ${atlanan} kayıt zaten aynı ad/no/şube ile mevcut olduğu için atlandı.` : "") + (kontenjanDoldu ? ` Kısıtlı plan ${KISITLI_OGRENCI_LIMITI} öğrenci sınırına ulaşıldığı için bazı kayıtlar eklenmedi.` : ""));
+    const hedefMetni = hedefler.size > 1 ? `${hedefler.size} şubeye` : `"${[...hedefler][0] || pdfSinif}" şubesine`;
+    setPdfBasari(`${yeniler.length} öğrenci ${hedefMetni} eklendi.` + (sinifsiz > 0 ? ` ${sinifsiz} kayıt şubesi sistemde tanımlı olmadığı için eklenmedi.` : "") + (atlanan > 0 ? ` ${atlanan} kayıt zaten aynı ad/no/şube ile mevcut olduğu için atlandı.` : "") + (kontenjanDoldu ? ` Kısıtlı plan ${KISITLI_OGRENCI_LIMITI} öğrenci sınırına ulaşıldığı için bazı kayıtlar eklenmedi.` : ""));
     setPdfOnizleme(null); setPdfDosyaAdi("");
   };
   const filtreliListe = useMemo(() => {
@@ -8056,7 +8084,7 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
             <button onClick={pdfModaliKapat} className="p-1"><IconX size={18} color={SUBTLE} /></button>
           </div>
           <div className="px-5 py-4 overflow-y-auto">
-            <p className="text-xs mb-4" style={{ color: SUBTLE }}>e-okul'dan alınan "Sınıf Listesi" PDF'ini yükleyin (S.No, Öğrenci No, Adı, Soyadı, Cinsiyeti sütunlu tablo). Öğrenci adı, sınıfı ve okul numarası otomatik okunur; kaydetmeden önce aşağıda gözden geçirip düzeltebilirsiniz.</p>
+            <p className="text-xs mb-4" style={{ color: SUBTLE }}>e-okul'dan alınan "Sınıf Listesi" PDF'ini yükleyin (S.No, Öğrenci No, Adı, Soyadı, Cinsiyeti sütunlu tablo). Tek şubenin ya da TÜM OKULUN (her sayfası bir şube) PDF'i yüklenebilir; her öğrenci sayfa başlığındaki şubesine otomatik atanır. Öğrenci adı, sınıfı ve okul numarası otomatik okunur; kaydetmeden önce aşağıda gözden geçirip düzeltebilirsiniz.</p>
 
             {!pdfOnizleme && (
               <label className="flex flex-col items-center justify-center gap-2 px-6 py-8 rounded-xl border-2 border-dashed cursor-pointer text-center"
@@ -8074,10 +8102,16 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
             {pdfOnizleme && (
               <div className="mt-1">
                 <div className="flex flex-wrap items-center gap-2 mb-3">
-                  <span className="text-xs font-medium" style={{ color: SUBTLE }}>Eklenecek şube:</span>
-                  <GoogleSelect value={pdfSinif} onChange={(e) => setPdfSinif(e.target.value)} className="w-28">
-                    {siniflar.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
-                  </GoogleSelect>
+                  {pdfCokSinif ? (
+                    <span className="text-xs font-medium" style={{ color: GREEN }}>Tüm okul PDF'i algılandı: öğrenciler kendi şubesine eklenecek.</span>
+                  ) : (
+                    <>
+                      <span className="text-xs font-medium" style={{ color: SUBTLE }}>Eklenecek şube:</span>
+                      <GoogleSelect value={pdfSinif} onChange={(e) => setPdfSinif(e.target.value)} className="w-28">
+                        {siniflar.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
+                      </GoogleSelect>
+                    </>
+                  )}
                   <span className="text-xs" style={{ color: SUBTLE }}>({pdfOnizleme.filter((o) => o.dahil).length} / {pdfOnizleme.length} öğrenci seçili)</span>
                   <div className="flex items-center gap-1.5 ml-auto">
                     <button onClick={() => pdfTumunuSecToggle(true)} className="text-[11px] font-medium px-2.5 py-1 rounded-full" style={{ color: BLUE, background: `${BLUE}14` }}>Tümünü Seç</button>
@@ -8085,13 +8119,39 @@ function Ogrenciler({ students, updateStudents, grades, updateGrades, attendance
                   </div>
                 </div>
                 <div className="rounded-lg overflow-hidden mb-4" style={{ border: `1px solid ${BORDER}`, maxHeight: 320, overflowY: "auto" }}>
-                  {pdfOnizleme.map((o, i) => (
-                    <div key={i} className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: i < pdfOnizleme.length - 1 ? `1px solid ${BORDER}` : "none", background: o.dahil ? SURFACE : BG }}>
-                      <input type="checkbox" checked={o.dahil} onChange={(e) => pdfSatirDegistir(i, "dahil", e.target.checked)} />
-                      <GoogleInput value={o.ad} onChange={(e) => pdfSatirDegistir(i, "ad", e.target.value)} className="flex-1 min-w-0 text-sm" />
-                      <GoogleInput value={o.no} onChange={(e) => pdfSatirDegistir(i, "no", e.target.value)} className="w-20 text-sm" placeholder="No" />
-                    </div>
-                  ))}
+                  {pdfCokSinif ? (
+                    // Tüm okul: şube başlıklı, salt okunur liste (yüzlerce satırda hızlı kalsın diye).
+                    pdfOnizleme.map((o, i) => {
+                      const yeniSube = i === 0 || pdfOnizleme[i - 1].sinif !== o.sinif;
+                      const tanimli = !!o.sinif && siniflar.includes(o.sinif);
+                      const subeSatirlari = yeniSube ? pdfOnizleme.filter((x) => x.sinif === o.sinif) : null;
+                      return (
+                        <React.Fragment key={i}>
+                          {yeniSube && (
+                            <div className="flex items-center gap-2 px-3 py-1.5 sticky top-0" style={{ background: tanimli ? `${BLUE}14` : `${RED}14`, borderBottom: `1px solid ${BORDER}` }}>
+                              <input type="checkbox" checked={subeSatirlari.every((x) => x.dahil)} onChange={(e) => pdfSinifTumunuSecToggle(o.sinif, e.target.checked)} />
+                              <span className="text-xs font-semibold" style={{ color: tanimli ? BLUE : RED }}>
+                                {o.sinif || "Şubesi okunamadı"} · {subeSatirlari.length} öğrenci{tanimli ? "" : " (sistemde tanımlı değil — eklenmez)"}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-2 px-3 py-1.5" style={{ borderBottom: `1px solid ${BORDER}`, background: o.dahil ? SURFACE : BG }}>
+                            <input type="checkbox" checked={o.dahil} onChange={(e) => pdfSatirDegistir(i, "dahil", e.target.checked)} />
+                            <span className="flex-1 min-w-0 text-sm truncate">{o.ad}</span>
+                            <span className="text-xs shrink-0" style={{ color: SUBTLE }}>{o.no}</span>
+                          </div>
+                        </React.Fragment>
+                      );
+                    })
+                  ) : (
+                    pdfOnizleme.map((o, i) => (
+                      <div key={i} className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: i < pdfOnizleme.length - 1 ? `1px solid ${BORDER}` : "none", background: o.dahil ? SURFACE : BG }}>
+                        <input type="checkbox" checked={o.dahil} onChange={(e) => pdfSatirDegistir(i, "dahil", e.target.checked)} />
+                        <GoogleInput value={o.ad} onChange={(e) => pdfSatirDegistir(i, "ad", e.target.value)} className="flex-1 min-w-0 text-sm" />
+                        <GoogleInput value={o.no} onChange={(e) => pdfSatirDegistir(i, "no", e.target.value)} className="w-20 text-sm" placeholder="No" />
+                      </div>
+                    ))
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <GoogleButton onClick={pdfIceAktar} disabled={pdfOnizleme.filter((o) => o.dahil).length === 0}>
