@@ -2566,6 +2566,14 @@ function guvenlikHaritasiniGuncelle(studentsListesi, tenantOnek) {
     console.error("Güvenlik eşleştirme tablosu güncellenemedi:", e);
   }
 }
+// Giriş sırasındaki yetki/eşleştirme yazmaları başarısız olursa (giriş yine de "başarılı" görünür ama
+// veri okunamaz) gerçek Firebase hatasını ekranda gösterir.
+function girisHatasiBildir(ne, e) {
+  const kod = (e && (e.code || e.message)) ? String(e.code || e.message) : "bilinmeyen hata";
+  try {
+    window.alert("Giriş sırasında bir kayıt Firebase'e yazılamadı.\n\nNe: " + ne + "\nHata: " + kod + "\n\nBu mesajı yöneticiye iletin.");
+  } catch (_) {}
+}
 // Kaydetme hatasını kullanıcıya gösterir (art arda aynı hata için en fazla 8 sn'de bir uyarır).
 let sonKayitHatasiZamani = 0;
 function kayitHatasiBildir(key, e) {
@@ -3099,7 +3107,7 @@ function GirisEkrani({ onGiris }) {
         const anaHarita = {};
         guncelAnaKullaniciListesi.forEach((a) => { if (a && a.sifre) anaHarita[String(a.sifre).trim().toUpperCase()] = a.id; });
         await db.ref(yonetimYoluAl() + "/_anaSifreId").set(anaHarita);
-      } catch (e) { console.error("Yönetici güvenlik haritası tazelenemedi:", e); }
+      } catch (e) { console.error("Yönetici güvenlik haritası tazelenemedi:", e); girisHatasiBildir("Yönetici şifre tablosu (_anaSifreId)", e); }
       const anaEslesme = guncelAnaKullaniciListesi.find((a) => a.sifre && deger.toUpperCase() === String(a.sifre).trim().toUpperCase());
       if (anaEslesme) {
         VERI_KOK = tenantYoluAl(anaEslesme.id);
@@ -3108,7 +3116,7 @@ function GirisEkrani({ onGiris }) {
           await db.ref(VERI_KOK + "/_yetkiler/" + auth.currentUser.uid).set({
             rol: "admin", kanit: deger.toUpperCase(), zaman: Date.now(),
           });
-        } catch (e) { console.error("Yönetici kimlik kanıtı yazılamadı:", e); }
+        } catch (e) { console.error("Yönetici kimlik kanıtı yazılamadı:", e); girisHatasiBildir("Yönetici yetki kaydı (_yetkiler)", e); }
         // Öğretmen girişinde olduğu gibi bir oturum kaydı açılır; böylece Program Sahibi bu
         // Ana Kullanıcıyı, hesabını silmeden çıkışa zorlayabilir (bkz. ProgramSahibiPaneli).
         const oturumId = oturumBaslat("admin", null);
@@ -3162,7 +3170,7 @@ function GirisEkrani({ onGiris }) {
             db.ref(kok + "/_ogretmenSifreId").set(ogrHarita),
             db.ref(kok + "/_ogrenciNoId").set(noHarita),
           ]);
-        } catch (e) { console.error("Güvenlik haritaları tazelenemedi:", e); }
+        } catch (e) { console.error("Güvenlik haritaları tazelenemedi:", e); girisHatasiBildir("Güvenlik haritaları (_ogrenciNoId/_ogretmenSifreId)", e); }
         const ogretmenKaydi = ogretmenSifresindenBul(deger, ogretmenSnap.val() || []);
         if (ogretmenKaydi) {
           VERI_KOK = kok;
@@ -3171,7 +3179,7 @@ function GirisEkrani({ onGiris }) {
             await db.ref(kok + "/_yetkiler/" + auth.currentUser.uid).set({
               rol: "ogretmen", kanit: deger.toUpperCase(), zaman: Date.now(),
             });
-          } catch (e) { console.error("Öğretmen kimlik kanıtı yazılamadı:", e); }
+          } catch (e) { console.error("Öğretmen kimlik kanıtı yazılamadı:", e); girisHatasiBildir("Öğretmen yetki kaydı (_yetkiler)", e); }
           const oturumId = oturumBaslat("ogretmen", ogretmenKaydi.id);
           try {
             localStorage.setItem(YETKI_ANAHTARI, "ogretmen");
@@ -3192,7 +3200,7 @@ function GirisEkrani({ onGiris }) {
             await db.ref(kok + "/_yetkiler/" + auth.currentUser.uid).set({
               rol: "veli", no: veliNo, kanit: deger, zaman: Date.now(),
             });
-          } catch (e) { console.error("Veli kimlik kanıtı yazılamadı:", e); }
+          } catch (e) { console.error("Veli kimlik kanıtı yazılamadı:", e); girisHatasiBildir("Veli yetki kaydı (_yetkiler)", e); }
           // Öğretmen/Ana Kullanıcı girişinde olduğu gibi bir oturum kaydı açılır; böylece bu veliye
           // şifresini veren öğretmen ya da Ana Kullanıcı, gerekirse oturumunu çıkışa zorlayabilir.
           const oturumId = oturumBaslat("veli", veliNo);
