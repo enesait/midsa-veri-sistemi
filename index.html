@@ -2566,10 +2566,24 @@ function guvenlikHaritasiniGuncelle(studentsListesi, tenantOnek) {
     console.error("Güvenlik eşleştirme tablosu güncellenemedi:", e);
   }
 }
+// Kaydetme hatasını kullanıcıya gösterir (art arda aynı hata için en fazla 8 sn'de bir uyarır).
+let sonKayitHatasiZamani = 0;
+function kayitHatasiBildir(key, e) {
+  console.error("Kaydetme hatası:", key, e);
+  const simdi = Date.now();
+  if (simdi - sonKayitHatasiZamani < 8000) return;
+  sonKayitHatasiZamani = simdi;
+  const kod = (e && (e.code || e.message)) ? String(e.code || e.message) : "bilinmeyen hata";
+  try {
+    window.alert("Kayıt Firebase'e yazılamadı ve geri alınabilir.\n\nAlan: " + key + "\nHata: " + kod + "\n\nBu mesajı yöneticiye iletin.");
+  } catch (_) {}
+}
 function saveKey(key, value) {
   if (!firebaseHazir) return;
   try {
-    db.ref(VERI_KOK + "/" + key).set(value);
+    const yazma = db.ref(VERI_KOK + "/" + key).set(value);
+    // Firebase yazması reddedilirse (kural/yetki/kota) artık sessiz kalmaz: gerçek hata gösterilir.
+    if (yazma && typeof yazma.catch === "function") yazma.catch((e) => kayitHatasiBildir(key, e));
     islemKaydet(key);
     // VELİ ÖNBELLEK KONTROLÜ: veli tarafı artık verinin tamamını sürekli dinlemiyor; bunun yerine
     // burada güncellenen bu KÜÇÜK (birkaç bayt) KATEGORİ BAZLI zaman damgasını okuyarak "bu
@@ -6225,7 +6239,7 @@ function SinifNobet({ sinifNobet, updateSinifNobet }) {
               <IconDotsVertical size={16} color={SUBTLE} />
             </button>
             {sinifMenuAcik && (
-              <div className="absolute z-30 mt-1 right-0 w-60 rounded-lg border shadow-lg p-1.5" style={{ background: SURFACE, borderColor: BORDER }}>
+              <div className="absolute z-30 mt-1 left-0 sm:left-auto sm:right-0 w-60 max-w-[calc(100vw-3rem)] rounded-lg border shadow-lg p-1.5" style={{ background: SURFACE, borderColor: BORDER }}>
                 <button type="button"
                   onClick={() => { setSinifMenuAcik(false); if (!seciliSinifAd) { window.alert("Önce silmek istediğiniz sınıfı seçin."); return; } sinifKaydiSil(seciliSinifAd); }}
                   disabled={!seciliSinifAd}
