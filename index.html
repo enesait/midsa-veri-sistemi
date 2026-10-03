@@ -2566,6 +2566,13 @@ function guvenlikHaritasiniGuncelle(studentsListesi, tenantOnek) {
     console.error("Güvenlik eşleştirme tablosu güncellenemedi:", e);
   }
 }
+// Firebase anahtarlarında (key) ". # $ / [ ]" karakterleri yasaktır. Şifreler (ör. "OKUL.2024")
+// güvenlik eşleştirme tablolarında ANAHTAR olarak kullanıldığı için bu karakterler güvenli bir koda
+// çevrilir. Aynı fonksiyon hem tabloyu yazarken hem giriş kanıtını (kanit) yazarken kullanılır; böylece
+// Firebase kuralındaki "tablo[kanit]" eşleşmesi korunur. Bu karakterleri içermeyen şifreler aynen kalır.
+function sifreAnahtariKodla(sifre) {
+  return String(sifre).replace(/[.#$\/\[\]]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0"));
+}
 // Giriş sırasındaki yetki/eşleştirme yazmaları başarısız olursa (giriş yine de "başarılı" görünür ama
 // veri okunamaz) gerçek Firebase hatasını ekranda gösterir.
 function girisHatasiBildir(ne, e) {
@@ -3105,7 +3112,7 @@ function GirisEkrani({ onGiris }) {
       // GÜVENLİK: Ana Kullanıcı (yönetici) güvenlik eşleştirme listesi eksik/eskiyse otomatik tazelenir.
       try {
         const anaHarita = {};
-        guncelAnaKullaniciListesi.forEach((a) => { if (a && a.sifre) anaHarita[String(a.sifre).trim().toUpperCase()] = a.id; });
+        guncelAnaKullaniciListesi.forEach((a) => { if (a && a.sifre) anaHarita[sifreAnahtariKodla(String(a.sifre).trim().toUpperCase())] = a.id; });
         await db.ref(yonetimYoluAl() + "/_anaSifreId").set(anaHarita);
       } catch (e) { console.error("Yönetici güvenlik haritası tazelenemedi:", e); girisHatasiBildir("Yönetici şifre tablosu (_anaSifreId)", e); }
       const anaEslesme = guncelAnaKullaniciListesi.find((a) => a.sifre && deger.toUpperCase() === String(a.sifre).trim().toUpperCase());
@@ -3114,7 +3121,7 @@ function GirisEkrani({ onGiris }) {
         // GÜVENLİK: yönetici kimlik kanıtı yazılır (bkz. veli girişindeki açıklama).
         try {
           await db.ref(VERI_KOK + "/_yetkiler/" + auth.currentUser.uid).set({
-            rol: "admin", kanit: deger.toUpperCase(), zaman: Date.now(),
+            rol: "admin", kanit: sifreAnahtariKodla(deger.toUpperCase()), zaman: Date.now(),
           });
         } catch (e) { console.error("Yönetici kimlik kanıtı yazılamadı:", e); girisHatasiBildir("Yönetici yetki kaydı (_yetkiler)", e); }
         // Öğretmen girişinde olduğu gibi bir oturum kaydı açılır; böylece Program Sahibi bu
@@ -3158,7 +3165,7 @@ function GirisEkrani({ onGiris }) {
         try {
           const tenantOnekIcin = onekSnap.val() || veliOnekVarsayilaniHesapla(ana.id);
           const ogrHarita = {};
-          (ogretmenSnap.val() || []).forEach((o) => { if (o && o.sifre && o.id) ogrHarita[String(o.sifre).trim().toUpperCase()] = o.id; });
+          (ogretmenSnap.val() || []).forEach((o) => { if (o && o.sifre && o.id) ogrHarita[sifreAnahtariKodla(String(o.sifre).trim().toUpperCase())] = o.id; });
           const noHarita = {};
           (ogrenciSnap.val() || []).forEach((s) => {
             if (s && s.no && String(s.no) !== "0" && s.id) {
@@ -3177,7 +3184,7 @@ function GirisEkrani({ onGiris }) {
           // GÜVENLİK: öğretmen kimlik kanıtı yazılır (bkz. veli girişindeki açıklama).
           try {
             await db.ref(kok + "/_yetkiler/" + auth.currentUser.uid).set({
-              rol: "ogretmen", kanit: deger.toUpperCase(), zaman: Date.now(),
+              rol: "ogretmen", kanit: sifreAnahtariKodla(deger.toUpperCase()), zaman: Date.now(),
             });
           } catch (e) { console.error("Öğretmen kimlik kanıtı yazılamadı:", e); girisHatasiBildir("Öğretmen yetki kaydı (_yetkiler)", e); }
           const oturumId = oturumBaslat("ogretmen", ogretmenKaydi.id);
@@ -4269,7 +4276,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
       const veri = snap.val() || {};
       const harita = {};
       Object.entries(veri).forEach(([id, a]) => {
-        if (a && a.sifre) harita[String(a.sifre).trim().toUpperCase()] = id;
+        if (a && a.sifre) harita[sifreAnahtariKodla(String(a.sifre).trim().toUpperCase())] = id;
       });
       await db.ref(yonetimYoluAl() + "/_anaSifreId").set(harita);
     } catch (e) { console.error("Yönetici güvenlik haritası güncellenemedi:", e); }
@@ -5503,7 +5510,7 @@ function StudentTracker() {
     try {
       const harita = {};
       (Array.isArray(next) ? next : []).forEach((o) => {
-        if (o && o.sifre && o.id) harita[String(o.sifre).trim().toUpperCase()] = o.id;
+        if (o && o.sifre && o.id) harita[sifreAnahtariKodla(String(o.sifre).trim().toUpperCase())] = o.id;
       });
       db.ref(VERI_KOK + "/_ogretmenSifreId").set(harita);
     } catch (e) { console.error("Öğretmen güvenlik haritası güncellenemedi:", e); }
