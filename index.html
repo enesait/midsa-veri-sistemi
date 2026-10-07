@@ -5279,9 +5279,13 @@ function StudentTracker() {
   // Önbellekteki/indirilen veriyi, veli ekranının ihtiyaç duyduğu state'lere uygular.
   const veliOnbellegiUygula = useCallback((data) => {
     const d = data || {};
+    // Firebase boş bir kategoriyi null döndürür; veli tarafı bunu {} yapıp dizi bekleyen
+    // state'lere (students/denemeler/kocluklOgrenciler) yazınca "x.filter is not a function"
+    // hatasıyla ekran çöküyordu. Dizi bekleyen alanlar burada güvenle diziye çevrilir.
+    const diziYap = (v) => Array.isArray(v) ? v : (v && typeof v === "object" ? Object.values(v).filter((x) => x != null) : []);
     veliVeriRef.current = d;
-    setStudents(d.students || []);
-    setDenemeler(d.denemeler || []);
+    setStudents(diziYap(d.students));
+    setDenemeler(diziYap(d.denemeler));
     setDenemeSonuclari(d.denemeSonuclari || {});
     setDenemeEkBilgi(d.denemeEkBilgi || {});
     setAttendance(d.attendance || {});
@@ -5291,7 +5295,7 @@ function StudentTracker() {
     setKitapKontrol(d.kitapKontrol || {});
     setKocDevam(d.kocDevam || {});
     setDavranisNotlari(d.davranisNotlari || {});
-    setKocluklOgrenciler(d.kocluklOgrenciler || []);
+    setKocluklOgrenciler(diziYap(d.kocluklOgrenciler));
     setKoclukNotlari(d.koclukNotlari || {});
     setKoclukGorusleri(d.koclukGorusleri || {});
     setDersIciOdev(d.dersIciOdev || {});
