@@ -2899,7 +2899,8 @@ function oturumBaslat(rol, ogretmenId) {
   if (!firebaseHazir) return null;
   try {
     const ref = db.ref(VERI_KOK + "/girisGecmisi").push();
-    ref.set({ rol, ogretmenId: ogretmenId || null, girisZamani: Date.now(), cikisZamani: null, zorlaCikis: false });
+    const yazma = ref.set({ rol, ogretmenId: ogretmenId || null, girisZamani: Date.now(), cikisZamani: null, zorlaCikis: false });
+    if (yazma && typeof yazma.catch === "function") yazma.catch((e) => { console.error("Oturum kaydı yazılamadı:", e); if (rol === "admin") girisHatasiBildir("Oturum kaydı (girisGecmisi)", e); });
     ref.onDisconnect().update({ cikisZamani: firebase.database.ServerValue.TIMESTAMP });
     return ref.key;
   } catch (e) { console.error("Oturum başlatılamadı:", e); return null; }
@@ -4132,6 +4133,7 @@ function ProgramSahibiPaneli({ cikisYap }) {
   const [acikId, setAcikId] = useState(null);
   const [ogretmenListeleri, setOgretmenListeleri] = useState({}); // anaId -> öğretmen şifreleri dizisi
   const [ogretmenYukleniyor, setOgretmenYukleniyor] = useState({}); // anaId -> boolean
+  const [anaGirisHatasi, setAnaGirisHatasi] = useState({}); // anaId -> okuma hatası kodu
   const [anaGirisGecmisi, setAnaGirisGecmisi] = useState({}); // anaId -> girisGecmisi kayıtları (sadece açık olan kart için canlı dinlenir)
   const [adOnizleme, setAdOnizleme] = useState({}); // anaId -> düzenlenmekte olan ad
   const [sifreOnizleme, setSifreOnizleme] = useState({}); // anaId -> düzenlenmekte olan şifre
@@ -4360,10 +4362,25 @@ function ProgramSahibiPaneli({ cikisYap }) {
     if (!acikId || !firebaseHazir) return;
     const ref = db.ref(tenantYoluAl(acikId) + "/girisGecmisi");
     const dinle = ref.on("value", (snap) => {
+      setAnaGirisHatasi((p) => ({ ...p, [acikId]: null }));
       setAnaGirisGecmisi((p) => ({ ...p, [acikId]: snap.val() || {} }));
+    }, (hata) => {
+      // Okuma reddedilirse (ör. Firebase kuralı) "oturum yok" demek yerine gerçek hatayı göster.
+      console.error("Giriş geçmişi okunamadı:", hata);
+      setAnaGirisHatasi((p) => ({ ...p, [acikId]: (hata && (hata.code || hata.message)) ? String(hata.code || hata.message) : "bilinmeyen hata" }));
     });
     return () => ref.off("value", dinle);
   }, [acikId]);
+
+  // Seçili Ana Kullanıcının son 5 yönetici girişi (en yeni üstte).
+  const acikAnaSonGirisler = useMemo(() => {
+    const gecmis = anaGirisGecmisi[acikId] || {};
+    return Object.entries(gecmis)
+      .map(([id, k]) => ({ id, ...k }))
+      .filter((k) => k.rol === "admin")
+      .sort((a, b) => (b.girisZamani || 0) - (a.girisZamani || 0))
+      .slice(0, 5);
+  }, [anaGirisGecmisi, acikId]);
 
   const acikAnaAktifOturum = useMemo(() => {
     const gecmis = anaGirisGecmisi[acikId] || {};
@@ -4600,8 +4617,11 @@ function ProgramSahibiPaneli({ cikisYap }) {
                               </div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium">
-                                  {acikAnaAktifOturum ? (acikAnaAktifOturum.zorlaCikis ? "Çıkışa zorlandı, bekleniyor…" : "Şu an aktif") : "Şu an aktif bir oturum yok"}
-                                </p>
+                                  {anaGirisHatasi[a.id] ? "Oturum bilgisi okunamadı" : (acikAnaAktifOturum ? (acikAnaAktifOturum.zorlaCikis ? "Çıkışa zorlandı, bekleniyor…" : "Şu an aktif") : "Şu an aktif bir oturum yok")}
+                                 </p>
+                                 {anaGirisHatasi[a.id] && (
+                                   <p className="text-[11px]" style={{ color: RED }}>Hata: {anaGirisHatasi[a.id]} — Firebase kuralında girisGecmisi okuma izni gerekiyor.</p>
+                                 )}
                                 {acikAnaAktifOturum && (
                                   <p className="text-[11px]" style={{ color: SUBTLE }}>Giriş: {tarihFormat(acikAnaAktifOturum.girisZamani)}</p>
                                 )}
@@ -4612,6 +4632,21 @@ function ProgramSahibiPaneli({ cikisYap }) {
                                 </button>
                               )}
                             </div>
+                             {acikAnaSonGirisler.length > 0 && (
+                               <div className="mb-4">
+                                 <p className="text-xs font-medium mb-1.5" style={{ color: SUBTLE }}>Son girişler</p>
+                                 <div className="flex flex-col gap-1">
+                                   {acikAnaSonGirisler.map((g) => (
+                                     <div key={g.id} className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-xs" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
+                                       <span>{tarihFormat(g.girisZamani)}</span>
+                                       <span className="font-medium" style={{ color: g.cikisZamani ? SUBTLE : GREEN }}>
+                                         {g.cikisZamani ? `Çıkış: ${tarihFormat(g.cikisZamani)}` : "Aktif"}
+                                       </span>
+                                     </div>
+                                   ))}
+                                 </div>
+                               </div>
+                             )}
                             <p className="text-xs font-medium mb-2 mt-3 flex items-center gap-1.5" style={{ color: SUBTLE }}>
                               <IconUsers size={13} color={SUBTLE} />Bu Ana Kullanıcının şifre verdiği öğretmenler {ogretmenler.length > 0 ? `(${ogretmenler.length})` : ""}
                             </p>
