@@ -11946,6 +11946,7 @@ function KonuTakipLejant() {
 function KarneKonuTakip({ ogrenci, kazanimListesi, konuTakip }) {
   const [seciliDers, setSeciliDers] = useState(null);
   const [hafta, setHafta] = useState(() => haftaAnahtari());
+  const [acikUniteler, setAcikUniteler] = useState({}); // ünite adı -> açık mı (varsayılan: kapalı)
 
   const tumKazanimVerisi = useMemo(() => (ogrenci ? kazanimTakipVerisiOku(konuTakip, ogrenci.id) : {}), [ogrenci, konuTakip]);
 
@@ -12001,19 +12002,28 @@ function KarneKonuTakip({ ogrenci, kazanimListesi, konuTakip }) {
           <p className="text-sm" style={{ color: SUBTLE }}>Bu ders için henüz kazanım tanımlanmadı.</p>
         ) : (
           <div className="flex flex-col">
-            {kazanimSatirlari(kazanimlar).map(({ k, baslik, no }, i) => {
-              const durum = durumlar[k.id] || "baslamadi";
-              const meta = KONU_TAKIP_DURUM_META[durum];
+            {kazanimUniteGruplari(kazanimlar).map((g, gi) => {
+              const acik = g.baslik === null || !!acikUniteler[g.baslik];
               return (
-                <React.Fragment key={k.id}>
-                {baslik && <p className="text-xs font-bold tracking-wide pt-3 pb-1" style={{ color: PURPLE }}>{baslik}</p>}
-                <div className="flex items-center gap-3 py-2" style={{ borderTop: i > 0 && !baslik ? `1px solid ${BORDER}` : "none" }}>
-                  <span className="text-sm flex-1 min-w-0 truncate">{no}. {k.ad}</span>
-                  <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full shrink-0" style={{ color: meta.renk, background: meta.arkaPlan }}>
-                    <KonuDurumIkon durum={durum} size={11} />{meta.etiket}
-                  </span>
+                <div key={g.baslik === null ? "duz" : `${gi}-${g.baslik}`} className={g.baslik !== null ? "rounded-xl overflow-hidden mb-2" : ""} style={g.baslik !== null ? { border: `1px solid ${BORDER}` } : undefined}>
+                  {g.baslik !== null && (
+                    <KazanimUniteAkordeonBasligi ad={g.baslik} acik={acik} sayi={g.satirlar.length}
+                      tamam={g.satirlar.filter(({ k }) => durumlar[k.id] === "tamamlandi").length}
+                      onClick={() => setAcikUniteler((o) => ({ ...o, [g.baslik]: !o[g.baslik] }))} />
+                  )}
+                  {acik && g.satirlar.map(({ k, no }, i) => {
+                    const durum = durumlar[k.id] || "baslamadi";
+                    const meta = KONU_TAKIP_DURUM_META[durum];
+                    return (
+                      <div key={k.id} className={g.baslik !== null ? "flex items-center gap-3 px-4 py-2" : "flex items-center gap-3 py-2"} style={{ borderTop: i > 0 ? `1px solid ${BORDER}` : "none" }}>
+                        <span className="text-sm flex-1 min-w-0 truncate">{no}. {k.ad}</span>
+                        <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full shrink-0" style={{ color: meta.renk, background: meta.arkaPlan }}>
+                          <KonuDurumIkon durum={durum} size={11} />{meta.etiket}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
-                </React.Fragment>
               );
             })}
           </div>
@@ -12202,6 +12212,26 @@ function kazanimSatirlari(kazanimlar) {
     no += 1;
     return { k, baslik, no };
   });
+}
+// Kazanımları ünitelere göre gruplar: [{ baslik, satirlar: [{ k, no }] }]. Hiç ünite yoksa tek
+// grup döner ve baslik null olur (düz liste).
+function kazanimUniteGruplari(kazanimlar) {
+  const gruplar = [];
+  kazanimSatirlari(kazanimlar).forEach(({ k, baslik, no }) => {
+    if (baslik !== null || gruplar.length === 0) gruplar.push({ baslik, satirlar: [] });
+    gruplar[gruplar.length - 1].satirlar.push({ k, no });
+  });
+  return gruplar;
+}
+// Dokununca açılıp kapanan ünite başlığı (konu takip ve Karne).
+function KazanimUniteAkordeonBasligi({ ad, acik, sayi, tamam, onClick }) {
+  return (
+    <button onClick={onClick} className="w-full flex items-center gap-2 px-4 py-3 text-left border-b" style={{ background: `${PURPLE}0F`, borderColor: BORDER }}>
+      <IconChevronDown size={16} color={PURPLE} style={{ transform: acik ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+      <span className="flex-1 min-w-0 text-xs font-bold tracking-wide" style={{ color: PURPLE }}>{ad}</span>
+      <span className="text-xs font-semibold shrink-0" style={{ color: SUBTLE }}>{tamam}/{sayi} tamamlandı</span>
+    </button>
+  );
 }
 function KazanimUniteBasligi({ ad }) {
   return (
@@ -12648,6 +12678,7 @@ function KazanimDurumDugmesi({ durum, onClick }) {
 function KoclukKazanimMatris({ ogrenci, ders, kazanimListesi, konuTakip, updateKonuTakipKayit, onGeri, onKazanimYonet }) {
   const kazanimlar = kazanimBankasiOku(kazanimListesi, ders.ad, sinifDuzeyiCoz(ogrenci.sinif));
   const [hafta, setHafta] = useState(() => haftaAnahtari());
+  const [acikUniteler, setAcikUniteler] = useState({}); // ünite adı -> açık mı (varsayılan: kapalı)
   const tumKazanimVerisi = kazanimTakipVerisiOku(konuTakip, ogrenci.id);
   const haftalar = kazanimHaftalikOku(tumKazanimVerisi);
   const haftaVerisi = haftalar[hafta] || {};
@@ -12686,15 +12717,24 @@ function KoclukKazanimMatris({ ogrenci, ders, kazanimListesi, konuTakip, updateK
               <GoogleButton onClick={onKazanimYonet} variant="outline"><IconEdit size={14} /> Kazanımları Yönet</GoogleButton>
             )}
           </div>
-        ) : kazanimSatirlari(kazanimlar).map(({ k, baslik, no }) => (
-          <React.Fragment key={k.id}>
-            {baslik && <KazanimUniteBasligi ad={baslik} />}
-            <div className="flex items-center gap-3 px-4 py-3 border-b" style={{ borderColor: BORDER }}>
-              <span className="text-sm font-medium flex-1 min-w-0 truncate" style={{ color: PURPLE }}>{no}. {k.ad}</span>
-              <KazanimDurumDugmesi durum={durumlar[k.id] || "baslamadi"} onClick={() => durumDegistir(k.id)} />
-            </div>
-          </React.Fragment>
-        ))}
+        ) : kazanimUniteGruplari(kazanimlar).map((g, gi) => {
+          const acik = g.baslik === null || !!acikUniteler[g.baslik];
+          return (
+            <React.Fragment key={g.baslik === null ? "duz" : `${gi}-${g.baslik}`}>
+              {g.baslik !== null && (
+                <KazanimUniteAkordeonBasligi ad={g.baslik} acik={acik} sayi={g.satirlar.length}
+                  tamam={g.satirlar.filter(({ k }) => durumlar[k.id] === "tamamlandi").length}
+                  onClick={() => setAcikUniteler((o) => ({ ...o, [g.baslik]: !o[g.baslik] }))} />
+              )}
+              {acik && g.satirlar.map(({ k, no }) => (
+                <div key={k.id} className="flex items-center gap-3 px-4 py-3 border-b" style={{ borderColor: BORDER }}>
+                  <span className="text-sm font-medium flex-1 min-w-0 truncate" style={{ color: PURPLE }}>{no}. {k.ad}</span>
+                  <KazanimDurumDugmesi durum={durumlar[k.id] || "baslamadi"} onClick={() => durumDegistir(k.id)} />
+                </div>
+              ))}
+            </React.Fragment>
+          );
+        })}
       </Kart>
 
       <KonuTakipLejant />
