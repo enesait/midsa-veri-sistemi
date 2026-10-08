@@ -11945,6 +11945,7 @@ function KonuTakipLejant() {
 // bir ders tanımlıysa her öğrenci için gösterilir.
 function KarneKonuTakip({ ogrenci, kazanimListesi, konuTakip }) {
   const [seciliDers, setSeciliDers] = useState(null);
+  const [hafta, setHafta] = useState(() => haftaAnahtari());
 
   const tumKazanimVerisi = useMemo(() => (ogrenci ? kazanimTakipVerisiOku(konuTakip, ogrenci.id) : {}), [ogrenci, konuTakip]);
 
@@ -11971,7 +11972,9 @@ function KarneKonuTakip({ ogrenci, kazanimListesi, konuTakip }) {
 
   const aktifDers = veriliDersler.find((d) => seciliDers && d.ad === seciliDers.ad) || veriliDersler[0];
   const kazanimlar = kazanimBankasiOku(kazanimListesi, aktifDers.ad, sinifDuzeyi);
-  const durumlar = tumKazanimVerisi[aktifDers.ad] || {};
+  const haftalar = kazanimHaftalikOku(tumKazanimVerisi);
+  const eskiDurumlar = tumKazanimVerisi[aktifDers.ad] && typeof tumKazanimVerisi[aktifDers.ad] === "object" ? tumKazanimVerisi[aktifDers.ad] : {};
+  const durumlar = hafta === KAZANIM_ESKI_HAFTA ? eskiDurumlar : ((haftalar[hafta] || {})[aktifDers.ad] || {});
 
   return (
     <>
@@ -11992,6 +11995,8 @@ function KarneKonuTakip({ ogrenci, kazanimListesi, konuTakip }) {
           </div>
         )}
         <p className="text-sm font-semibold mb-2" style={{ color: aktifDers.renk }}>{aktifDers.ad}</p>
+        <div className="mb-3"><HaftaSecici hafta={hafta} onChange={setHafta} /></div>
+        <KarneHaftaGecmisi haftalar={haftalar} eskiDurumlar={eskiDurumlar} ders={aktifDers} kazanimlar={kazanimlar} hafta={hafta} onSec={setHafta} />
         {kazanimlar.length === 0 ? (
           <p className="text-sm" style={{ color: SUBTLE }}>Bu ders için henüz kazanım tanımlanmadı.</p>
         ) : (
@@ -12040,6 +12045,102 @@ function denemeKazanimVerisiOku(konuTakip, ogrenciId) {
 const KAZANIM_TAKIP_ANAHTARI = "__kazanimTakibi__";
 function kazanimTakipVerisiOku(konuTakip, ogrenciId) {
   return (konuTakip && konuTakip[ogrenciId] && konuTakip[ogrenciId][KAZANIM_TAKIP_ANAHTARI]) || {};
+}
+
+// --- Haftalık kazanım takibi ---------------------------------------------------------------
+// Durumlar artık HAFTA bazında tutulur ve geçmiş haftalar silinmez. Şekil, aynı (veli için izinli)
+// düğümün içinde: konuTakip[ogrenciId]["__kazanimTakibi__"]["__haftalar__"][haftaAnahtari]
+//   = { [dersAdı]: { [kazanimId]: durum } }
+// haftaAnahtari = o haftanın Pazartesi günü ("2026-10-05"). Haftalık takip eklenmeden önce
+// işaretlenen eski (haftasız) kayıtlar aynı düğümün altında ders adıyla durur ve Karne'de
+// "Eski kayıt" olarak görünür.
+const KAZANIM_HAFTALAR_ANAHTARI = "__haftalar__";
+const KAZANIM_ESKI_HAFTA = "__eski_kayit__";
+const HAFTA_AYLAR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+function haftaAnahtari(tarih) {
+  const t = tarih ? new Date(tarih) : new Date();
+  const x = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+}
+function haftaTarihi(anahtar) {
+  const [y, m, d] = anahtar.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+function haftaKaydir(anahtar, adet) {
+  const t = haftaTarihi(anahtar);
+  t.setDate(t.getDate() + 7 * adet);
+  return haftaAnahtari(t);
+}
+function haftaEtiketi(anahtar) {
+  const b = haftaTarihi(anahtar);
+  const e = new Date(b); e.setDate(e.getDate() + 6);
+  return b.getMonth() === e.getMonth()
+    ? `${b.getDate()} – ${e.getDate()} ${HAFTA_AYLAR[e.getMonth()]} ${e.getFullYear()}`
+    : `${b.getDate()} ${HAFTA_AYLAR[b.getMonth()]} – ${e.getDate()} ${HAFTA_AYLAR[e.getMonth()]} ${e.getFullYear()}`;
+}
+function kazanimHaftalikOku(tumKazanimVerisi) {
+  const h = tumKazanimVerisi && tumKazanimVerisi[KAZANIM_HAFTALAR_ANAHTARI];
+  return h && typeof h === "object" ? h : {};
+}
+function HaftaSecici({ hafta, onChange }) {
+  const buHafta = haftaAnahtari();
+  const eski = hafta === KAZANIM_ESKI_HAFTA;
+  return (
+    <div className="flex items-center gap-2 p-3 rounded-2xl" style={{ background: `${PURPLE}0F` }}>
+      <button onClick={() => onChange(haftaKaydir(eski ? buHafta : hafta, -1))} disabled={eski}
+        className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-white disabled:opacity-30" title="Önceki hafta">
+        <IconChevronLeft size={18} color={PURPLE} />
+      </button>
+      <div className="flex-1 min-w-0 text-center">
+        <p className="text-sm font-bold" style={{ color: PURPLE }}>{eski ? "Eski kayıt (haftasız)" : haftaEtiketi(hafta)}</p>
+        <p className="text-xs" style={{ color: SUBTLE }}>
+          {eski ? "Haftalık takipten önce işaretlenenler" : hafta === buHafta ? "Bu hafta" : hafta < buHafta ? "Geçmiş hafta" : "Gelecek hafta"}
+          {!eski && hafta !== buHafta && <button onClick={() => onChange(buHafta)} className="ml-2 font-semibold underline" style={{ color: PURPLE }}>Bu haftaya dön</button>}
+          {eski && <button onClick={() => onChange(buHafta)} className="ml-2 font-semibold underline" style={{ color: PURPLE }}>Bu haftaya dön</button>}
+        </p>
+      </div>
+      <button onClick={() => onChange(haftaKaydir(hafta, 1))} disabled={eski || hafta >= buHafta}
+        className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-white disabled:opacity-30" title="Sonraki hafta">
+        <IconChevronRight size={18} color={PURPLE} />
+      </button>
+    </div>
+  );
+}
+// Karne: seçili ders için kayıt girilmiş haftaların kısa geçmişi (sayılarla); dokununca o hafta açılır.
+function KarneHaftaGecmisi({ haftalar, eskiDurumlar, ders, kazanimlar, hafta, onSec }) {
+  const idler = kazanimlar.map((k) => k.id);
+  const ozet = (d) => {
+    const c = { tamamlandi: 0, eksik: 0, calisiliyor: 0 };
+    idler.forEach((id) => { if (c[d[id]] !== undefined) c[d[id]] += 1; });
+    return c;
+  };
+  const satirlar = Object.keys(haftalar)
+    .filter((w) => haftalar[w] && haftalar[w][ders.ad])
+    .sort((a, b) => (a < b ? 1 : -1))
+    .map((w) => ({ id: w, etiket: haftaEtiketi(w), d: haftalar[w][ders.ad] }));
+  if (eskiDurumlar && Object.keys(eskiDurumlar).length > 0) satirlar.push({ id: KAZANIM_ESKI_HAFTA, etiket: "Eski kayıt (haftasız)", d: eskiDurumlar });
+  if (satirlar.length === 0) return <p className="text-xs mb-3" style={{ color: SUBTLE }}>Bu ders için henüz haftalık kayıt yok.</p>;
+  return (
+    <div className="mb-3">
+      <p className="text-xs font-semibold mb-1.5" style={{ color: SUBTLE }}>Hafta geçmişi</p>
+      <div className="flex flex-col gap-1.5 max-h-52 overflow-y-auto">
+        {satirlar.map((r) => {
+          const c = ozet(r.d);
+          const aktif = r.id === hafta;
+          return (
+            <button key={r.id} onClick={() => onSec(r.id)} className="flex items-center gap-2 px-3 py-2 rounded-xl text-left"
+              style={{ background: aktif ? `${PURPLE}14` : BG, border: `1px solid ${aktif ? PURPLE : "transparent"}` }}>
+              <span className="text-xs font-semibold flex-1 min-w-0 truncate" style={{ color: aktif ? PURPLE : INK }}>{r.etiket}</span>
+              <span className="text-xs font-bold shrink-0" style={{ color: GREEN }}>✓ {c.tamamlandi}</span>
+              <span className="text-xs font-bold shrink-0" style={{ color: ORANGE }}>! {c.eksik}</span>
+              <span className="text-xs font-bold shrink-0" style={{ color: BLUE }}>▶ {c.calisiliyor}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // --- Kazanım Bankası: Sınıf Düzeyi ------------------------------------------------------------
@@ -12546,13 +12647,20 @@ function KazanimDurumDugmesi({ durum, onClick }) {
 // çalışma durumunu tek tıkla döngüsel olarak değiştirmeyi sağlayan ekran.
 function KoclukKazanimMatris({ ogrenci, ders, kazanimListesi, konuTakip, updateKonuTakipKayit, onGeri, onKazanimYonet }) {
   const kazanimlar = kazanimBankasiOku(kazanimListesi, ders.ad, sinifDuzeyiCoz(ogrenci.sinif));
+  const [hafta, setHafta] = useState(() => haftaAnahtari());
   const tumKazanimVerisi = kazanimTakipVerisiOku(konuTakip, ogrenci.id);
-  const durumlar = tumKazanimVerisi[ders.ad] || {};
+  const haftalar = kazanimHaftalikOku(tumKazanimVerisi);
+  const haftaVerisi = haftalar[hafta] || {};
+  const durumlar = haftaVerisi[ders.ad] || {};
 
+  // Her hafta ayrı kaydedilir; diğer haftalara dokunulmaz.
   const durumDegistir = (kazanimId) => {
     const mevcut = durumlar[kazanimId] || "baslamadi";
     const sonraki = KONU_TAKIP_DURUM_SIRASI[(KONU_TAKIP_DURUM_SIRASI.indexOf(mevcut) + 1) % KONU_TAKIP_DURUM_SIRASI.length];
-    updateKonuTakipKayit(ogrenci.id, KAZANIM_TAKIP_ANAHTARI, { ...tumKazanimVerisi, [ders.ad]: { ...durumlar, [kazanimId]: sonraki } });
+    updateKonuTakipKayit(ogrenci.id, KAZANIM_TAKIP_ANAHTARI, {
+      ...tumKazanimVerisi,
+      [KAZANIM_HAFTALAR_ANAHTARI]: { ...haftalar, [hafta]: { ...haftaVerisi, [ders.ad]: { ...durumlar, [kazanimId]: sonraki } } },
+    });
   };
 
   return (
@@ -12567,6 +12675,8 @@ function KoclukKazanimMatris({ ogrenci, ders, kazanimListesi, konuTakip, updateK
           <p className="text-sm" style={{ color: SUBTLE }}>Öğrenci: <b>{ogrenci.ad}</b> · Deneme yanlışlarına göre kazanım takibi</p>
         </div>
       </Kart>
+
+      <HaftaSecici hafta={hafta} onChange={setHafta} />
 
       <Kart className="p-0 overflow-hidden">
         {kazanimlar.length === 0 ? (
