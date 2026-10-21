@@ -5462,7 +5462,26 @@ function StudentTracker() {
             try {
               const kayit = obListe.find((x) => x && String(x.no) === String(veliNo));
               const sk = onbellek.veri._siralamaKarne;
-              if (!kayit || !sk || !sk[kayit.id] || Object.keys(sk[kayit.id]).length === 0) delete veliDamgalarRef.current._siralamaKarne;
+              if (!kayit || !sk || !sk[kayit.id] || Object.keys(sk[kayit.id]).length === 0) {
+                delete veliDamgalarRef.current._siralamaKarne;
+                // Cihazda sıralama özeti yoksa 4 saat beklemeden, yalnızca bu öğrencinin küçük kaydı bir kez çekilir.
+                if (kayit && kayit.id) {
+                  (async () => {
+                    try {
+                      const sSnap = await db.ref(VERI_KOK + "/_siralamaKarne/" + kayit.id).once("value");
+                      const sv = sSnap.val();
+                      if (!sv || iptal) return;
+                      const yeniVeri = { ...onbellek.veri, _siralamaKarne: { ...(sk || {}), [kayit.id]: sv } };
+                      const dSnap = await db.ref(VERI_KOK + "/_sonGuncelleme/_siralamaKarne").once("value");
+                      const yeniDamgalar = { ...veliDamgalarRef.current };
+                      if (dSnap.val()) yeniDamgalar._siralamaKarne = dSnap.val();
+                      veliOnbellegiUygula(yeniVeri);
+                      veliDamgalarRef.current = yeniDamgalar;
+                      try { localStorage.setItem(veliOnbellekAnahtari, JSON.stringify({ veri: yeniVeri, damgalar: yeniDamgalar, zaman: onbellek.zaman })); } catch (e2) {}
+                    } catch (e1) { console.warn("Sıralama özeti çekilemedi:", e1); }
+                  })();
+                }
+              }
             } catch (e) {}
             setBaglanti("bagli");
             setLoading(false);
