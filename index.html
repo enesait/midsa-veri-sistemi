@@ -16126,7 +16126,15 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
       setYukleniyor(true);
       try {
         const buffer = await dosya.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+        // pdf.js veriyi worker'a aktarırken buffer'ı tüketebildiğinden her denemede kopya veriyoruz.
+        let pdf;
+        try {
+          pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
+        } catch (ilkHata) {
+          if (ilkHata && ilkHata.name === "PasswordException") throw ilkHata;
+          console.warn("PDF ilk denemede açılamadı, font ayarları kapatılarak yeniden deneniyor:", ilkHata);
+          pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer.slice(0)), disableFontFace: true, isEvalSupported: false, useSystemFonts: false }).promise;
+        }
         let metin = "";
         for (let s = 1; s <= pdf.numPages; s++) {
           const sayfa = await pdf.getPage(s);
@@ -16189,20 +16197,31 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
           // Sayfa genişliğine sığmayıp iki fiziksel satıra sarılan öğrenci kayıtlarını (bkz.
           // satirlariKaynastir) tek satıra birleştir — aksi halde devam satırında "Sınıf" çıpası
           // olmadığından hizalama hiç çalışmaz ve boş bırakılan derslerden sonrakiler kayar.
-          const satirlarObj = satirlariKaynastir(satirlarHam);
-          // Bu sayfa bir "ders sütunlu" net listesi tablosuysa (Türkçe/Matematik/Fen... başlıkları
-          // bulunursa), öğrenci satırlarındaki sayılar sıraya göre değil KONUMA göre yeniden dizilir
-          // — böylece boş bırakılan bir ders, sonraki dersleri kaydırmaz (bkz. dersSutunSinirlariniBul).
-          const dersSinirlari = dersSutunSinirlariniBul(satirlarObj, aktifDersler.length) || dersSutunSinirlariniBulVeriden(satirlarObj, aktifDersler.length);
-          satirlarObj.forEach(({ parcalar, metin: satirMetni }) => {
-            metin += (dersSinirlari ? satirNumaralariniHizala(parcalar, satirMetni, dersSinirlari) : satirMetni) + "\n";
-          });
-          metin += "\n";
+          let sayfaMetni = "";
+          try {
+            const satirlarObj = satirlariKaynastir(satirlarHam);
+            // Bu sayfa bir "ders sütunlu" net listesi tablosuysa (Türkçe/Matematik/Fen... başlıkları
+            // bulunursa), öğrenci satırlarındaki sayılar sıraya göre değil KONUMA göre yeniden dizilir
+            // — böylece boş bırakılan bir ders, sonraki dersleri kaydırmaz (bkz. dersSutunSinirlariniBul).
+            const dersSinirlari = dersSutunSinirlariniBul(satirlarObj, aktifDersler.length) || dersSutunSinirlariniBulVeriden(satirlarObj, aktifDersler.length);
+            satirlarObj.forEach(({ parcalar, metin: satirMetni }) => {
+              sayfaMetni += (dersSinirlari ? satirNumaralariniHizala(parcalar, satirMetni, dersSinirlari) : satirMetni) + "\n";
+            });
+            sayfaMetni += "\n";
+          } catch (hizalamaHatasi) {
+            // Konum bazlı hizalama bu sayfada hata verirse düz satır metniyle devam et.
+            console.warn("PDF satır hizalama hatası, düz metinle devam ediliyor:", hizalamaHatasi);
+            sayfaMetni = satirlarHam.map((satir) => satir.metin).join("\n") + "\n\n";
+          }
+          metin += sayfaMetni;
         }
         setPdfMetin(metin.trim());
       } catch (err) {
         console.error("PDF okunamadı:", err);
-        setHata("PDF dosyası okunamadı. Dosyanın bozuk/şifreli olmadığından emin olun.");
+        const nedenKodu = err && (err.name || err.message) ? String(err.name && err.name !== "Error" ? err.name : err.message).slice(0, 80) : "bilinmeyen hata";
+        setHata(err && err.name === "PasswordException"
+          ? "PDF dosyası şifreli. Şifreyi kaldırıp tekrar yükleyin."
+          : "PDF dosyası okunamadı (" + nedenKodu + "). Dosyanın bozuk/şifreli olmadığından emin olun.");
       } finally { setYukleniyor(false); }
     } else {
       setHata("Desteklenmeyen dosya türü. Lütfen .xlsx, .xls, .csv veya .pdf dosyası seçin.");
