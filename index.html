@@ -5279,8 +5279,10 @@ function StudentTracker() {
   // kimliği ikinci/üçüncü seviyede), bunlar değiştiğinde o kategorinin TAMAMI (okulun tamamı,
   // ama sadece o kategori) indirilir — bu Firebase'in veri yapısından kaynaklanan bir sınırlamadır.
   const VELI_KONTROL_ARALIGI_MS = 4 * 60 * 60 * 1000; // 4 saat
-  const veliOnbellekAnahtari = "veliKarneOnbellek_" + (anaId || "varsayilan");
-  const veliKontrolAnahtari = "veliKarneSonKontrol_" + (anaId || "varsayilan");
+  // Önbellek ve "son kontrol" zamanı ÖĞRENCİ BAZLIDIR (anaId + öğrenci numarası): aynı cihazda
+  // farklı öğrencilerle giriş yapılınca birinin verisi/4 saat sayacı diğerine karışmaz.
+  const veliOnbellekAnahtari = "veliKarneOnbellek_" + (anaId || "varsayilan") + "_" + (veliNo || "");
+  const veliKontrolAnahtari = "veliKarneSonKontrol_" + (anaId || "varsayilan") + "_" + (veliNo || "");
 
   // Velinin ilgilendiği tüm kategoriler ve her birinin çekme stratejisi:
   //  "ogrenci" → Firebase'de doğrudan "kategori/öğrenciId" yoluyla saklanıyor, sadece bu öğrenciye
@@ -5310,6 +5312,17 @@ function StudentTracker() {
   // her değişiminde yeniden render tetiklemesine gerek yok — sadece işlevler içinde okunuyor).
   const veliVeriRef = useRef(null);
   const veliDamgalarRef = useRef({});
+
+  // Öğrenci (anahtar) değişince: sayaç o öğrencinin kendi kaydından okunur; önceki öğrenciden kalan
+  // mesaj, bellekteki veri ve kategori damgaları sıfırlanır. (Yükleme efektinden ÖNCE tanımlı olmalı.)
+  useEffect(() => {
+    let v = 0;
+    try { const h = localStorage.getItem(veliKontrolAnahtari); v = h ? Number(h) : 0; } catch (e) {}
+    setVeliSonKontrolZamani(v);
+    setVeliSonMesaj("");
+    veliVeriRef.current = null;
+    veliDamgalarRef.current = {};
+  }, [veliKontrolAnahtari]);
 
   // Önbellekteki/indirilen veriyi, veli ekranının ihtiyaç duyduğu state'lere uygular.
   const veliOnbellegiUygula = useCallback((data) => {
@@ -5407,14 +5420,25 @@ function StudentTracker() {
     const authIptal = auth.onAuthStateChanged(async (kullanici) => {
       if (!kullanici || iptal) return;
       try {
+        // Eski (öğrenciye göre ayrılmamış) ortak önbellek/sayaç anahtarlarını temizle.
+        try {
+          localStorage.removeItem("veliKarneOnbellek_" + (anaId || "varsayilan"));
+          localStorage.removeItem("veliKarneSonKontrol_" + (anaId || "varsayilan"));
+        } catch (e) {}
         const onbellekHam = localStorage.getItem(veliOnbellekAnahtari);
         if (onbellekHam) {
           const onbellek = JSON.parse(onbellekHam);
-          veliOnbellegiUygula(onbellek.veri);
-          veliDamgalarRef.current = onbellek.damgalar || {};
-          setBaglanti("bagli");
-          setLoading(false);
-          return; // cihazda veri zaten var: Firebase'e hiç gidilmedi
+          // Önbellek yalnızca bu öğrencinin kaydını içeriyorsa geçerlidir; aksi halde yok sayılıp taze indirilir.
+          const ob = onbellek && onbellek.veri ? onbellek.veri.students : null;
+          const obListe = Array.isArray(ob) ? ob : (ob && typeof ob === "object" ? Object.values(ob) : []);
+          const onbellekGecerli = obListe.some((x) => x && String(x.no) === String(veliNo));
+          if (onbellekGecerli) {
+            veliOnbellegiUygula(onbellek.veri);
+            veliDamgalarRef.current = onbellek.damgalar || {};
+            setBaglanti("bagli");
+            setLoading(false);
+            return; // cihazda bu öğrencinin verisi zaten var: Firebase'e hiç gidilmedi
+          }
         }
         const { veri, damgalar } = await veliTamVeriCek(veliNo);
         veliOnbellegiUygula(veri);
@@ -5432,7 +5456,7 @@ function StudentTracker() {
       }
     });
     return () => { iptal = true; authIptal(); };
-  }, [yetkili, rol, anaId, veliNo, veliOnbellegiUygula, kilitKontrolTamam, kilitDurumu, veliTamVeriCek]);
+  }, [yetkili, rol, anaId, veliNo, veliOnbellekAnahtari, veliOnbellegiUygula, kilitKontrolTamam, kilitDurumu, veliTamVeriCek]);
 
   // Elle "Güncelle" kontrolü: en fazla 4 saatte bir çalışır. Önce TÜM kategorilerin küçük zaman
   // damgalarını (_sonGuncelleme) tek seferde okur (birkaç bayt), cihazdaki son bilinen damgalarla
