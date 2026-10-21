@@ -5462,7 +5462,7 @@ function StudentTracker() {
             try {
               const kayit = obListe.find((x) => x && String(x.no) === String(veliNo));
               const sk = onbellek.veri._siralamaKarne;
-              if (!kayit || !sk || !sk[kayit.id] || Object.keys(sk[kayit.id]).length === 0) {
+              if (!kayit || !sk || !sk[kayit.id] || sk[kayit.id].v !== 2) {
                 delete veliDamgalarRef.current._siralamaKarne;
                 // Cihazda sıralama özeti yoksa 4 saat beklemeden, yalnızca bu öğrencinin küçük kaydı bir kez çekilir.
                 if (kayit && kayit.id) {
@@ -5573,9 +5573,17 @@ function StudentTracker() {
           });
           return girisVar ? net : null;
         };
+        const gecerli = students.filter((x) => x && x.id);
+        const seviyeAnahtari = (x) => sinifSeviyesiCikar(x.sinif) || ("s:" + x.sinif);
+        const sinifGrup = {}, seviyeGrup = {};
+        gecerli.forEach((x) => {
+          (sinifGrup[x.sinif] = sinifGrup[x.sinif] || []).push(x);
+          const k = seviyeAnahtari(x);
+          (seviyeGrup[k] = seviyeGrup[k] || []).push(x);
+        });
+        // 1) "Tüm Denemeler": sonuç girilmiş tüm denemelerin ORTALAMA netine göre.
         const ortalamalar = {};
-        students.forEach((s) => {
-          if (!s || !s.id) return;
+        gecerli.forEach((s) => {
           let toplam = 0, adet = 0;
           denemelerVerili.forEach((d) => {
             const net = netBul(denemeSonuclari[d.id] && denemeSonuclari[d.id][s.id]);
@@ -5583,21 +5591,46 @@ function StudentTracker() {
           });
           if (adet) ortalamalar[s.id] = Math.round((toplam / adet) * 100) / 100;
         });
-        const siraHesapla = (liste, id) => {
-          const benim = ortalamalar[id];
-          // Sıra: grupta kendinden kesin yüksek ortalama neti olanların sayısı + 1 (eşit netler aynı sırayı paylaşır).
-          // Toplam: gruptaki TÜM kayıtlı öğrenci sayısı (sonucu girilmemiş olanlar dahil).
-          return { sira: liste.filter((x) => ortalamalar[x.id] !== undefined && ortalamalar[x.id] > benim).length + 1, toplam: liste.length };
+        // Sıra: grupta kendinden kesin üstte olanların sayısı + 1 (eşitler aynı sırayı paylaşır).
+        // Toplam: gruptaki TÜM kayıtlı öğrenci sayısı (sonucu girilmemiş olanlar dahil).
+        const siraTumu = (liste, id) => ({ sira: liste.filter((x) => ortalamalar[x.id] !== undefined && ortalamalar[x.id] > ortalamalar[id]).length + 1, toplam: liste.length });
+        // 2) Tek deneme: o denemenin PUANINA (LGS puanı) göre; puanı olmayanlar puanlıların altında, kendi aralarında nete göre (öğretmen listesiyle aynı).
+        const denemeDegerleri = {};
+        denemelerVerili.forEach((d) => {
+          const m = {};
+          gecerli.forEach((x) => {
+            const net = netBul(denemeSonuclari[d.id] && denemeSonuclari[d.id][x.id]);
+            if (net === null) return;
+            const ek = denemeEkBilgi && denemeEkBilgi[d.id] ? denemeEkBilgi[d.id][x.id] : null;
+            const pv = ek && ek.lgsPuani != null && !isNaN(Number(ek.lgsPuani)) && Number(ek.lgsPuani) > 0 ? Number(ek.lgsPuani) : null;
+            m[x.id] = { net: Math.round(net * 100) / 100, puan: pv };
+          });
+          denemeDegerleri[d.id] = m;
+        });
+        const ustteMi = (b, a) => {
+          if (b.puan != null && a.puan != null) return b.puan > a.puan;
+          if (b.puan != null) return true;
+          if (a.puan != null) return false;
+          return b.net > a.net;
+        };
+        const siraDeneme = (liste, dId, id) => {
+          const m = denemeDegerleri[dId];
+          return { sira: liste.filter((x) => m[x.id] && ustteMi(m[x.id], m[id])).length + 1, toplam: liste.length };
         };
         const harita = {};
-        students.forEach((s) => {
-          if (!s || !s.id || ortalamalar[s.id] === undefined) return;
-          harita[s.id] = {
-            // Genel sıralama: aynı sınıf düzeyindeki (ör. tüm 7. sınıflar) kayıtlı öğrenciler arasında.
-            genel: siraHesapla(students.filter((x) => x && x.id && (sinifSeviyesiCikar(s.sinif) ? sinifSeviyesiCikar(x.sinif) === sinifSeviyesiCikar(s.sinif) : x.sinif === s.sinif)), s.id),
-            sinifIci: siraHesapla(students.filter((x) => x && x.id && x.sinif === s.sinif), s.id),
-          };
+        gecerli.forEach((s) => {
+          const sg = sinifGrup[s.sinif], vg = seviyeGrup[seviyeAnahtari(s)];
+          const kayit = { v: 2 };
+          // Genel sıralama: aynı sınıf düzeyindeki (ör. tüm 7. sınıflar) kayıtlı öğrenciler arasında.
+          if (ortalamalar[s.id] !== undefined) kayit.tumu = { genel: siraTumu(vg, s.id), sinifIci: siraTumu(sg, s.id) };
+          const dk = {};
+          denemelerVerili.forEach((d) => {
+            if (denemeDegerleri[d.id][s.id]) dk[d.id] = { genel: siraDeneme(vg, d.id, s.id), sinifIci: siraDeneme(sg, d.id, s.id) };
+          });
+          if (Object.keys(dk).length) kayit.d = dk;
+          if (kayit.tumu || kayit.d) harita[s.id] = kayit;
         });
+
         const kanonik = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x)) ? Object.keys(x).sort().reduce((o, key) => { o[key] = x[key]; return o; }, {}) : x);
         const yeni = kanonik(harita);
         if (siralamaSonYazilanRef.current === yeni) return;
@@ -5613,7 +5646,7 @@ function StudentTracker() {
       }
     }, 2000);
     return () => clearTimeout(zamanlayici);
-  }, [rol, loading, baglanti, anaId, students, denemeler, denemeSonuclari]);
+  }, [rol, loading, baglanti, anaId, students, denemeler, denemeSonuclari, denemeEkBilgi]);
   // ================= SIRALAMA ÖZETİ SONU =================
 
   const updateStudents = useCallback((next) => {
@@ -13737,9 +13770,13 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
     // veli yalnızca kendi öğrencisinin özetini okur. Kayıt yoksa kutu gösterilmez (yanlış "1/1" yerine).
     if (!ogrenci) return null;
     const k = siralamaKarneVeri && siralamaKarneVeri[ogrenci.id];
-    if (!k || (!k.genel && !k.sinifIci)) return null;
-    return { genel: k.genel || null, sinifIci: k.sinifIci || null };
-  }, [ogrenci, siralamaKarneVeri]);
+    if (!k) return null;
+    // "Tüm Denemeler" → ortalama net sıralaması (eski biçimdeki kayıt da burada kullanılır);
+    // tek deneme seçiliyse → o denemenin puan sıralaması.
+    const kaynak = (denemeSeciliTumMu || !denemeSecili) ? (k.tumu || (k.genel || k.sinifIci ? k : null)) : (k.d ? k.d[denemeSecili] : null);
+    if (!kaynak || (!kaynak.genel && !kaynak.sinifIci)) return null;
+    return { genel: kaynak.genel || null, sinifIci: kaynak.sinifIci || null };
+  }, [ogrenci, siralamaKarneVeri, denemeSecili, denemeSeciliTumMu]);
 
   // --- Ders bazlı gelişim: seçili dersin denemeler boyunca net değişimini gösterir. ---
   const [gelisimDers, setGelisimDers] = useState(DERSLER[0]);
@@ -14037,7 +14074,7 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
       {siralamaKarne && (
         <Kart className="p-5">
           <h2 className="font-display text-base font-medium mb-3 flex items-center gap-2"><IconChart size={17} color={ORANGE} />Sıralama / Karne</h2>
-          <p className="text-xs mb-3" style={{ color: SUBTLE }}>Sonuç girilmiş tüm denemelerin ortalama netine göre hesaplanmıştır.</p>
+          <p className="text-xs mb-3" style={{ color: SUBTLE }}>{denemeSeciliTumMu || !denemeSecili ? "Sonuç girilmiş tüm denemelerin ortalama netine göre hesaplanmıştır." : "Seçili denemenin puanına göre hesaplanmıştır (puan girilmemişse nete göre)."}</p>
           <div className="grid grid-cols-2 gap-3">
             {siralamaKarne.sinifIci && (
               <div className="rounded-lg px-3 py-3" style={{ background: BG }}>
