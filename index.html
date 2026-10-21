@@ -5316,6 +5316,8 @@ function StudentTracker() {
   const veliDamgalarRef = useRef({});
   // Öğretmen tarafında hesaplanmış sıralama özeti: { [öğrenciId]: { genel:{sira,toplam}, sinifIci:{sira,toplam} } }
   const [siralamaKarneVeri, setSiralamaKarneVeri] = useState({});
+  // Okuması reddedilen/başarısız olan kategoriler: damgaları cihaza işlenmez ki sonraki Güncelle'de yeniden denensin.
+  const veliOkunamayanRef = useRef(new Set());
 
   // Öğrenci (anahtar) değişince: sayaç o öğrencinin kendi kaydından okunur; önceki öğrenciden kalan
   // mesaj, bellekteki veri ve kategori damgaları sıfırlanır. (Yükleme efektinden ÖNCE tanımlı olmalı.)
@@ -5383,6 +5385,7 @@ function StudentTracker() {
         return { [id]: sSnap.val() || {} };
       } catch (e) {
         console.warn("Sıralama özeti okunamadı (kural eklenmemiş olabilir):", e);
+        veliOkunamayanRef.current.add("_siralamaKarne");
         return { [id]: {} };
       }
     }
@@ -5411,11 +5414,14 @@ function StudentTracker() {
   const veliTamVeriCek = useCallback(async (veliNoDeger) => {
     try {
       const id = await veliOgrenciIdBul(veliNoDeger);
+      veliOkunamayanRef.current = new Set();
       const [veri, damgaSnap] = await Promise.all([
         veliKategorileriTopluGetir(VELI_KATEGORI_ADLARI, id, veliNoDeger),
         db.ref(VERI_KOK + "/_sonGuncelleme").once("value"),
       ]);
-      return { veri, damgalar: damgaSnap.val() || {} };
+      const damgalar = { ...(damgaSnap.val() || {}) };
+      veliOkunamayanRef.current.forEach((k) => { delete damgalar[k]; });
+      return { veri, damgalar };
     } catch (hata) {
       console.error("Daraltılmış veli veri çekme başarısız, tüm veriye dönülüyor:", hata);
       const snap = await db.ref(VERI_KOK).once("value");
@@ -5450,7 +5456,14 @@ function StudentTracker() {
           const onbellekGecerli = obListe.some((x) => x && String(x.no) === String(veliNo));
           if (onbellekGecerli) {
             veliOnbellegiUygula(onbellek.veri);
-            veliDamgalarRef.current = onbellek.damgalar || {};
+            veliDamgalarRef.current = { ...(onbellek.damgalar || {}) };
+            // Eski sürümden kalan önbellekte bu öğrencinin sıralama özeti yoksa damgası silinir:
+            // bir sonraki Güncelle'de _siralamaKarne yeniden denenir (küçük bir okuma).
+            try {
+              const kayit = obListe.find((x) => x && String(x.no) === String(veliNo));
+              const sk = onbellek.veri._siralamaKarne;
+              if (!kayit || !sk || !sk[kayit.id] || Object.keys(sk[kayit.id]).length === 0) delete veliDamgalarRef.current._siralamaKarne;
+            } catch (e) {}
             setBaglanti("bagli");
             setLoading(false);
             return; // cihazda bu öğrencinin verisi zaten var: Firebase'e hiç gidilmedi
@@ -5494,11 +5507,13 @@ function StudentTracker() {
         setVeliSonMesaj("Veriler zaten güncel, yeni bir şey yok.");
       } else {
         const id = await veliOgrenciIdBul(veliNo);
+        veliOkunamayanRef.current = new Set();
         const kismiVeri = await veliKategorileriTopluGetir(degisenler, id, veliNo);
         const birlesikVeri = { ...(veliVeriRef.current || {}), ...kismiVeri };
         veliOnbellegiUygula(birlesikVeri);
         kullanimKaydetVeKontrolEt(boyutMbTahminiHesapla(kismiVeri));
         const birlesikDamgalar = { ...cihazDamgalar, ...sunucuDamgalar };
+        veliOkunamayanRef.current.forEach((k) => { if (cihazDamgalar[k] === undefined) delete birlesikDamgalar[k]; else birlesikDamgalar[k] = cihazDamgalar[k]; });
         veliDamgalarRef.current = birlesikDamgalar;
         try {
           localStorage.setItem(veliOnbellekAnahtari, JSON.stringify({ veri: birlesikVeri, damgalar: birlesikDamgalar, zaman: simdi }));
