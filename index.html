@@ -5296,6 +5296,8 @@ function StudentTracker() {
     kocluklOgrenciler: "tumu", koclukNotlari: "tumu", koclukGorusleri: "tumu",
     dersIciOdev: "tumu", dersIciKitap: "tumu", dersIciKatilim: "tumu",
     odevler: "tumu", odevKitaplari: "tumu", kazanimListesi: "tumu",
+    // Öğretmen/yönetici tarafında hesaplanan sıralama özeti (sadece sıra/toplam sayıları); veli sadece kendi kaydını okur.
+    _siralamaKarne: "ogrenci",
   };
   const VELI_KATEGORI_ADLARI = Object.keys(VELI_KATEGORILERI);
 
@@ -5312,6 +5314,8 @@ function StudentTracker() {
   // her değişiminde yeniden render tetiklemesine gerek yok — sadece işlevler içinde okunuyor).
   const veliVeriRef = useRef(null);
   const veliDamgalarRef = useRef({});
+  // Öğretmen tarafında hesaplanmış sıralama özeti: { [öğrenciId]: { genel:{sira,toplam}, sinifIci:{sira,toplam} } }
+  const [siralamaKarneVeri, setSiralamaKarneVeri] = useState({});
 
   // Öğrenci (anahtar) değişince: sayaç o öğrencinin kendi kaydından okunur; önceki öğrenciden kalan
   // mesaj, bellekteki veri ve kategori damgaları sıfırlanır. (Yükleme efektinden ÖNCE tanımlı olmalı.)
@@ -5353,6 +5357,7 @@ function StudentTracker() {
     setOdevler(d.odevler || {});
     setOdevKitaplari(d.odevKitaplari || {});
     setKazanimListesi(d.kazanimListesi || {});
+    setSiralamaKarneVeri(d._siralamaKarne || {});
   }, []);
 
   // Öğrenci numarasından gerçek Firebase kimliğini bulur (güvenlik eşleştirme tablosu üzerinden,
@@ -5369,6 +5374,17 @@ function StudentTracker() {
     if (kategori === "students") {
       const snap = await db.ref(VERI_KOK + "/students").orderByChild("no").equalTo(String(veliNoDeger)).once("value");
       return dpDiziyeCevir(Object.values(snap.val() || {}));
+    }
+    if (kategori === "_siralamaKarne") {
+      // Güvenli okuma: Firebase kuralı henüz eklenmediyse (permission_denied) ya da kayıt yoksa diğer
+      // veriler etkilenmesin diye hata yutulur ve boş döner (sıralama kutusu o zaman gösterilmez).
+      try {
+        const sSnap = await db.ref(VERI_KOK + "/_siralamaKarne/" + id).once("value");
+        return { [id]: sSnap.val() || {} };
+      } catch (e) {
+        console.warn("Sıralama özeti okunamadı (kural eklenmemiş olabilir):", e);
+        return { [id]: {} };
+      }
     }
     const strateji = VELI_KATEGORILERI[kategori];
     if (strateji === "ogrenci") {
@@ -5501,6 +5517,69 @@ function StudentTracker() {
 
   const veliButonAktif = !veliKontrolEdiliyor && (Date.now() - veliSonKontrolZamani >= VELI_KONTROL_ARALIGI_MS);
   // ================= VELİ VERİ AKIŞI SONU =================
+
+  // ================= SIRALAMA ÖZETİ (öğretmen/yönetici tarafında hesaplanır) =================
+  // Veli ekranı yalnızca kendi öğrencisinin kaydını indirdiği için sıralamayı orada hesaplayamaz.
+  // Bu yüzden öğretmen/yönetici uygulamayı açıkken, sonuç girilmiş tüm denemelerin ORTALAMA netine göre
+  // her öğrencinin sınıf içi ve genel sırası burada hesaplanıp _siralamaKarne/<öğrenciId> altına
+  // (sadece sıra/toplam sayıları) yazılır. Sunucudaki içerik zaten aynıysa hiçbir şey yazılmaz.
+  const siralamaSonYazilanRef = useRef(null);
+  useEffect(() => {
+    if (rol !== "ogretmen" && rol !== "admin") return;
+    if (loading || baglanti !== "bagli" || !firebaseHazir || !VERI_KOK) return;
+    if (!Array.isArray(students) || !Array.isArray(denemeler)) return;
+    const zamanlayici = setTimeout(async () => {
+      try {
+        const denemelerVerili = denemeler.filter((d) => d && denemeSonuclari && denemeSonuclari[d.id] && Object.keys(denemeSonuclari[d.id]).length > 0);
+        const netBul = (kayit) => {
+          let net = 0, girisVar = false;
+          DERSLER.forEach((d) => {
+            const r = kayit && kayit[d];
+            if (r) { girisVar = true; net += netHesapla(Number(r.dogru) || 0, Number(r.yanlis) || 0); }
+          });
+          return girisVar ? net : null;
+        };
+        const ortalamalar = {};
+        students.forEach((s) => {
+          if (!s || !s.id) return;
+          let toplam = 0, adet = 0;
+          denemelerVerili.forEach((d) => {
+            const net = netBul(denemeSonuclari[d.id] && denemeSonuclari[d.id][s.id]);
+            if (net !== null) { toplam += net; adet++; }
+          });
+          if (adet) ortalamalar[s.id] = Math.round((toplam / adet) * 100) / 100;
+        });
+        const siraHesapla = (liste, id) => {
+          const sonuclar = liste.filter((s) => ortalamalar[s.id] !== undefined);
+          const benim = ortalamalar[id];
+          // Eşit netler aynı sırayı paylaşır (kendinden kesin yüksek net sayısı + 1).
+          return { sira: sonuclar.filter((s) => ortalamalar[s.id] > benim).length + 1, toplam: sonuclar.length };
+        };
+        const harita = {};
+        students.forEach((s) => {
+          if (!s || !s.id || ortalamalar[s.id] === undefined) return;
+          harita[s.id] = {
+            genel: siraHesapla(students.filter((x) => x && x.id), s.id),
+            sinifIci: siraHesapla(students.filter((x) => x && x.id && x.sinif === s.sinif), s.id),
+          };
+        });
+        const kanonik = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x)) ? Object.keys(x).sort().reduce((o, key) => { o[key] = x[key]; return o; }, {}) : x);
+        const yeni = kanonik(harita);
+        if (siralamaSonYazilanRef.current === yeni) return;
+        const snap = await db.ref(VERI_KOK + "/_siralamaKarne").once("value");
+        if (kanonik(snap.val() || {}) !== yeni) {
+          await db.ref(VERI_KOK + "/_siralamaKarne").set(harita);
+          await db.ref(VERI_KOK + "/_sonGuncelleme/_siralamaKarne").set(Date.now());
+        }
+        siralamaSonYazilanRef.current = yeni;
+      } catch (e) {
+        // Kural henüz eklenmemişse (permission_denied) sessizce geçilir; veli sıralama kutusunu görmez.
+        console.warn("Sıralama özeti yazılamadı:", e);
+      }
+    }, 2000);
+    return () => clearTimeout(zamanlayici);
+  }, [rol, loading, baglanti, anaId, students, denemeler, denemeSonuclari]);
+  // ================= SIRALAMA ÖZETİ SONU =================
 
   const updateStudents = useCallback((next) => {
     setStudents(next);
@@ -5689,7 +5768,7 @@ function StudentTracker() {
       odevler={odevler} odevKitaplari={odevKitaplari}
       kazanimListesi={kazanimListesi}
       baglanti={baglanti} cikisYap={cikisYap}
-      veliButonAktif={veliButonAktif} veliKontrolEdiliyor={veliKontrolEdiliyor} veliSonMesaj={veliSonMesaj} veliVeriKontrolEt={veliVeriKontrolEt} />;
+      veliButonAktif={veliButonAktif} veliKontrolEdiliyor={veliKontrolEdiliyor} veliSonMesaj={veliSonMesaj} veliVeriKontrolEt={veliVeriKontrolEt} siralamaKarneVeri={siralamaKarneVeri} />;
   }
 
   return (
@@ -11778,7 +11857,7 @@ function Karne({ students, grades, attendance, denemeler, bransDenemeleri = [], 
 // --- Veli Girişi: öğretmenin tam uygulamasından tamamen ayrı, sabit tek ekranlı, salt-okunur bir
 // kabuk. Veli hiçbir veriyi değiştiremez; sadece kendi öğrencisinin no'sunu veya adını yazarak
 // arar ve o öğrenciye ait yoklama, not ve deneme bilgilerini görüntüler.
-function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, bransDenemeleri = [], denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, konuTakip, updateKonuTakip, updateKonuTakipKayit, odevler, odevKitaplari, kazanimListesi, baglanti, cikisYap, veliButonAktif, veliKontrolEdiliyor, veliSonMesaj, veliVeriKontrolEt }) {
+function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denemeler, bransDenemeleri = [], denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, konuTakip, updateKonuTakip, updateKonuTakipKayit, odevler, odevKitaplari, kazanimListesi, baglanti, cikisYap, veliButonAktif, veliKontrolEdiliyor, veliSonMesaj, veliVeriKontrolEt, siralamaKarneVeri }) {
   // Veli varsayılan olarak öğrenci karnesini görür; "Konu Takibi" butonuna basınca evde
   // çalışılan/bitirilen konuları kendisi girip görebileceği ayrı bir ekrana, "Deneme Takibi"
   // butonuna basınca da okulda yapılan denemede hangi dersten hangi kazanımı yanlış yaptığını
@@ -11876,7 +11955,7 @@ function VeliUygulama({ veliNo, students, grades, dersYoklama, attendance, denem
               soruCozum={soruCozum} kitapKontrol={kitapKontrol} kocDevam={kocDevam} kocluklOgrenciler={kocluklOgrenciler} koclukNotlari={koclukNotlari} koclukGorusleri={koclukGorusleri}
               dersIciOdev={dersIciOdev} dersIciKitap={dersIciKitap} dersIciKatilim={dersIciKatilim} davranisNotlari={davranisNotlari}
               kazanimListesi={kazanimListesi} konuTakip={konuTakip} updateKonuTakipKayit={updateKonuTakipKayit}
-              odevler={odevler} onOdevlereGit={() => setGorunum("odevler")} />
+              odevler={odevler} siralamaKarneVeri={siralamaKarneVeri} onOdevlereGit={() => setGorunum("odevler")} />
           </>
         ) : gorunum === "odevler" ? (
           <VeliOdevler veliNo={veliNo} students={students} odevler={odevler} odevKitaplari={odevKitaplari}
@@ -13365,7 +13444,7 @@ function akilliKocOnerileriUret({ devamOzet, ogrenciDenemeleri, tumDenemelerOrta
   return oneriler;
 }
 
-function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, denemeler, bransDenemeleri = [], denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, kazanimListesi, konuTakip, updateKonuTakipKayit, odevler, onOdevlereGit }) {
+function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, denemeler, bransDenemeleri = [], denemeSonuclari, denemeEkBilgi, soruCozum, kitapKontrol, kocDevam, kocluklOgrenciler, koclukNotlari, koclukGorusleri, dersIciOdev, dersIciKitap, dersIciKatilim, davranisNotlari, kazanimListesi, konuTakip, updateKonuTakipKayit, odevler, siralamaKarneVeri, onOdevlereGit }) {
   const ogrenci = useMemo(() => students.find((s) => s.no === veliNo) || null, [students, veliNo]);
   const [denemeSecili, setDenemeSecili] = useState("");
   const denemeSeciliTumMu = denemeSecili === VELI_TUM_DENEMELER_ID;
@@ -13619,39 +13698,13 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
   // --- Sıralama / Karne: öğrencinin sonuç girilmiş tüm denemelerinin ORTALAMA netine göre
   // hem sınıf içi hem de genel sıralamasını hesaplar. ---
   const siralamaKarne = useMemo(() => {
+    // Sıralama öğretmen/yönetici tarafında hesaplanıp _siralamaKarne/<öğrenciId> altına yazılır;
+    // veli yalnızca kendi öğrencisinin özetini okur. Kayıt yoksa kutu gösterilmez (yanlış "1/1" yerine).
     if (!ogrenci) return null;
-    const denemelerVerili = denemeler.filter((d) => denemeSonuclari[d.id] && Object.keys(denemeSonuclari[d.id]).length > 0);
-    if (!denemelerVerili.length) return null;
-    const ogrenciNetHesapla = (kayit) => {
-      let net = 0, girisVar = false;
-      DERSLER.forEach((d) => {
-        const r = kayit[d];
-        if (r) { girisVar = true; net += netHesapla(Number(r.dogru) || 0, Number(r.yanlis) || 0); }
-      });
-      return girisVar ? net : null;
-    };
-    const hesapla = (liste) => {
-      const sonuclar = liste.map((s) => {
-        let toplam = 0, adet = 0;
-        denemelerVerili.forEach((d) => {
-          const kayit = denemeSonuclari[d.id]?.[s.id];
-          if (!kayit) return;
-          const net = ogrenciNetHesapla(kayit);
-          if (net !== null) { toplam += net; adet++; }
-        });
-        if (!adet) return null;
-        return { id: s.id, net: toplam / adet };
-      }).filter(Boolean);
-      sonuclar.sort((a, b) => b.net - a.net);
-      const sira = sonuclar.findIndex((s) => s.id === ogrenci.id);
-      if (sira === -1) return null;
-      return { sira: sira + 1, toplam: sonuclar.length, net: sonuclar[sira].net };
-    };
-    const genel = hesapla(students);
-    const sinifIci = hesapla(students.filter((s) => s.sinif === ogrenci.sinif));
-    if (!genel && !sinifIci) return null;
-    return { genel, sinifIci };
-  }, [ogrenci, students, denemeler, denemeSonuclari]);
+    const k = siralamaKarneVeri && siralamaKarneVeri[ogrenci.id];
+    if (!k || (!k.genel && !k.sinifIci)) return null;
+    return { genel: k.genel || null, sinifIci: k.sinifIci || null };
+  }, [ogrenci, siralamaKarneVeri]);
 
   // --- Ders bazlı gelişim: seçili dersin denemeler boyunca net değişimini gösterir. ---
   const [gelisimDers, setGelisimDers] = useState(DERSLER[0]);
