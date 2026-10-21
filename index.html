@@ -5584,16 +5584,17 @@ function StudentTracker() {
           if (adet) ortalamalar[s.id] = Math.round((toplam / adet) * 100) / 100;
         });
         const siraHesapla = (liste, id) => {
-          const sonuclar = liste.filter((s) => ortalamalar[s.id] !== undefined);
           const benim = ortalamalar[id];
-          // Eşit netler aynı sırayı paylaşır (kendinden kesin yüksek net sayısı + 1).
-          return { sira: sonuclar.filter((s) => ortalamalar[s.id] > benim).length + 1, toplam: sonuclar.length };
+          // Sıra: grupta kendinden kesin yüksek ortalama neti olanların sayısı + 1 (eşit netler aynı sırayı paylaşır).
+          // Toplam: gruptaki TÜM kayıtlı öğrenci sayısı (sonucu girilmemiş olanlar dahil).
+          return { sira: liste.filter((x) => ortalamalar[x.id] !== undefined && ortalamalar[x.id] > benim).length + 1, toplam: liste.length };
         };
         const harita = {};
         students.forEach((s) => {
           if (!s || !s.id || ortalamalar[s.id] === undefined) return;
           harita[s.id] = {
-            genel: siraHesapla(students.filter((x) => x && x.id), s.id),
+            // Genel sıralama: aynı sınıf düzeyindeki (ör. tüm 7. sınıflar) kayıtlı öğrenciler arasında.
+            genel: siraHesapla(students.filter((x) => x && x.id && (sinifSeviyesiCikar(s.sinif) ? sinifSeviyesiCikar(x.sinif) === sinifSeviyesiCikar(s.sinif) : x.sinif === s.sinif)), s.id),
             sinifIci: siraHesapla(students.filter((x) => x && x.id && x.sinif === s.sinif), s.id),
           };
         });
@@ -14046,7 +14047,7 @@ function VeliOgrenciGoster({ veliNo, students, grades, dersYoklama, attendance, 
             )}
             {siralamaKarne.genel && (
               <div className="rounded-lg px-3 py-3" style={{ background: BG }}>
-                <p className="text-xs mb-1" style={{ color: SUBTLE }}>Genel Sıralama</p>
+                <p className="text-xs mb-1" style={{ color: SUBTLE }}>{sinifSeviyesiCikar(ogrenci.sinif) ? `Genel Sıralama (${sinifSeviyesiCikar(ogrenci.sinif)}. Sınıflar)` : "Genel Sıralama"}</p>
                 <p className="text-lg font-display font-semibold">{siralamaKarne.genel.sira} <span className="text-sm font-normal" style={{ color: SUBTLE }}>/ {siralamaKarne.genel.toplam}</span></p>
               </div>
             )}
