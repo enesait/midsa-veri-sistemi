@@ -15651,6 +15651,26 @@ function satirlariKaynastir(satirlarObjHam) {
 // YALNIZCA hiçbir tek satır tüm dersleri bulamıyorsa VE konum bazlı arama tüm dersleri bulabiliyorsa,
 // sayfa metnine tam ders sırasını içeren sentetik bir başlık satırı döndürür (aksi halde null: eski
 // formatlar etkilenmez).
+// PDF'teki öğrenci satırlarındaki sınıf bilgisinden ("9-A" gibi) sınıf SEVİYESİNİ tahmin eder. Satırların
+// en az %60'ı aynı seviyeyi gösteriyor ve bu seviye sistemde tanımlıysa onu döndürür; aksi halde null
+// (ör. sınıf bilgisi hiç olmayan Atatürk formatı). Böylece yanlış "Sınıf Seviyesi" seçiliyken yüklenen
+// bir PDF, yanlış ders/soru ayarıyla (ör. 9. sınıf PDF'i LGS ayarıyla) okunmaz.
+function pdfSeviyeAlgila(metin, seviyeler) {
+  try {
+    const sayac = {}; let toplam = 0;
+    String(metin || "").split("\n").forEach((ham) => {
+      const m = noTokenlariniBirlestir(ham.trim()).match(OGRENCI_SATIRI_REGEX);
+      if (!m) return;
+      const sv = (String(m[4]).match(/^(\d{1,2})/) || [])[1];
+      if (!sv) return;
+      sayac[sv] = (sayac[sv] || 0) + 1; toplam++;
+    });
+    if (toplam < 3) return null;
+    const [enCok, adet] = Object.entries(sayac).sort((a, b) => b[1] - a[1])[0];
+    if (adet / toplam < 0.6) return null;
+    return (seviyeler || []).includes(enCok) ? enCok : null;
+  } catch (e) { return null; }
+}
 function pdfBaslikSatiriUret(satirlarObj, dersler, aliasListesi) {
   try {
     const hedef = (dersler || []).length;
@@ -16389,6 +16409,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
           console.warn("PDF ilk denemede açılamadı, font ayarları kapatılarak yeniden deneniyor:", ilkHata);
           pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer.slice(0)), disableFontFace: true, isEvalSupported: false, useSystemFonts: false }).promise;
         }
+        const metniCikar = async (dersListesi, aliasL) => {
         let metin = "";
         for (let s = 1; s <= pdf.numPages; s++) {
           const sayfa = await pdf.getPage(s);
@@ -16457,8 +16478,8 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
             // Bu sayfa bir "ders sütunlu" net listesi tablosuysa (Türkçe/Matematik/Fen... başlıkları
             // bulunursa), öğrenci satırlarındaki sayılar sıraya göre değil KONUMA göre yeniden dizilir
             // — böylece boş bırakılan bir ders, sonraki dersleri kaydırmaz (bkz. dersSutunSinirlariniBul).
-            const dersSinirlari = dersSutunSinirlariniBul(satirlarObj, aktifDersler.length) || dersSutunSinirlariniBulVeriden(satirlarObj, aktifDersler.length);
-            const sentetikBaslik = pdfBaslikSatiriUret(satirlarObj, aktifDersler, aktifAliasListesi);
+            const dersSinirlari = dersSutunSinirlariniBul(satirlarObj, dersListesi.length) || dersSutunSinirlariniBulVeriden(satirlarObj, dersListesi.length);
+            const sentetikBaslik = pdfBaslikSatiriUret(satirlarObj, dersListesi, aliasL);
             if (sentetikBaslik) sayfaMetni += sentetikBaslik + "\n";
             satirlarObj.forEach(({ parcalar, metin: satirMetni }) => {
               sayfaMetni += (dersSinirlari ? satirNumaralariniHizala(parcalar, satirMetni, dersSinirlari) : satirMetni) + "\n";
@@ -16470,6 +16491,18 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
             sayfaMetni = satirlarHam.map((satir) => satir.metin).join("\n") + "\n\n";
           }
           metin += sayfaMetni;
+        }
+        return metin;
+        };
+        let metin = await metniCikar(aktifDersler, aktifAliasListesi);
+        // Yanlış "Sınıf Seviyesi" seçiliyken yüklenen PDF'i otomatik doğru seviyeye geçirip o seviyenin
+        // ders/soru ayarıyla yeniden oku (sınıf bilgisi olmayan formatlarda hiçbir şey değişmez).
+        const algilananSeviye = pdfSeviyeAlgila(metin, seviyeler);
+        if (algilananSeviye && algilananSeviye !== seviye) {
+          const yeniBilgi = denemeDersBilgisi(aktifDeneme, algilananSeviye);
+          setSeviye(algilananSeviye);
+          metin = await metniCikar(yeniBilgi.dersler, aliasListesiUret(yeniBilgi.dersler));
+          setBasariMesaji("PDF'teki sınıflara göre Sınıf Seviyesi otomatik olarak " + algilananSeviye + ". sınıf seçildi.");
         }
         setPdfMetin(metin.trim());
       } catch (err) {
