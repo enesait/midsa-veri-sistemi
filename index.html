@@ -15846,8 +15846,22 @@ function sinifOkunamayanSatiriYenidenCoz(hamVeriStr, dersSirasi, dersSoru) {
   }
   return null;
 }
-function pdfSatirAyristir(satir, dersSirasi, dersSoru = DERS_SORU) {
+// Bazı raporlarda (ör. Atatürk Ortaokulu "Türkiye Geneli Deneme") şube, okul numarası ve "8-A" biçimli
+// sınıf OLMADAN, ismin ÖNÜNDE tek harf olarak yazılır: "1 E AZAD HARMAN 19 1 18,67 ...". Standart regex
+// bu harfi ismin parçası sanıp sınıfı boş bırakıyor (ve ders sayılarının kaymasına yol açan "sınıf
+// okunamadı" yedek yollarını tetikliyordu). Satır standart kalıba uymuyorsa, tek harfi şube kabul edip
+// satırı "sıra AD SINIF sayılar" biçimine çeviririz (sınıf = seçili sınıf seviyesi + "-" + harf).
+const SUBE_ONDE_SATIRI_REGEX = /^\*?\s*(\d{1,4})\s+([A-F])\s+([^0-9]{2,}?)\s+(-?\d.*)$/u;
+function pdfSatirAyristir(satir, dersSirasi, dersSoru = DERS_SORU, seviye = "") {
   let m = satir.match(OGRENCI_SATIRI_REGEX);
+  if (!m && seviye) {
+    const sb = satir.match(SUBE_ONDE_SATIRI_REGEX);
+    if (sb) {
+      const yeniSatir = `${sb[1]} ${sb[3].trim()} ${seviye}-${sb[2]} ${sb[4]}`;
+      const yeniM = yeniSatir.match(OGRENCI_SATIRI_REGEX);
+      if (yeniM) { satir = yeniSatir; m = yeniM; }
+    }
+  }
   let sinifEksik = false;
   if (!m) {
     // Bazı raporlarda bazı öğrencilerin SINIF bilgisi hiç basılmamış (boş bırakılmış) olabilir. Sınıf
@@ -15923,6 +15937,50 @@ function pdfSatirAyristir(satir, dersSirasi, dersSoru = DERS_SORU) {
 // yakalar. Bir sonraki kaydın başlangıcı ("<no> - <BÜYÜK HARF İSİM>") her kaydın doğal sınırı olarak
 // kullanılır, böylece "Toplam", "LGS Puanı" ve sıralama sütunlarındaki fazladan sayılar sorun
 // yaratmaz (pdfSatirAyristir zaten yalnızca ilk dersSirasi.length*3 sayıyı kullanır).
+// Aynı öğrenci bazı raporlarda İKİ ayrı satırda yer alır (ör. oturumlara bölünmüş sınavlarda biri yalnızca
+// Matematik/Fen, diğeri yalnızca diğer dersler dolu). Aynı ad + aynı sınıfa sahip satırlar birbirini
+// TAMAMLIYORSA (hiçbir derste ikisinde de değer yoksa) tek kayıtta birleştirilir. Bir derste ikisinde de
+// değer varsa (gerçekten farklı iki öğrenci olabilir) birleştirilmez, yalnızca uyarı eklenir. İki satırın
+// LGS puanı kısmi olduğundan birleşik kayıtta puan boş bırakılır.
+function ayniOgrencileriBirlestir(kayitlar, dersSoru = DERS_SORU) {
+  const dolu = (v) => !!v && ((Number(v.dogru) || 0) + (Number(v.yanlis) || 0)) > 0;
+  const sonuc = [];
+  const harita = new Map();
+  (kayitlar || []).forEach((r) => {
+    const adKey = adNormallestir(r.ad);
+    if (!adKey || !r.dersSonuc) { sonuc.push(r); return; }
+    const anahtar = `${adKey}|${r.sinif || ""}`;
+    if (!harita.has(anahtar)) { harita.set(anahtar, sonuc.length); sonuc.push(r); return; }
+    const idx = harita.get(anahtar);
+    const ilk = sonuc[idx];
+    const noA = noNormallestir(ilk.no), noB = noNormallestir(r.no);
+    const noCakisiyor = noA !== "0" && noB !== "0" && noA !== noB;
+    const dersler = Array.from(new Set([...Object.keys(ilk.dersSonuc || {}), ...Object.keys(r.dersSonuc || {})]));
+    const cakisma = noCakisiyor || dersler.some((d) => dolu(ilk.dersSonuc[d]) && dolu(r.dersSonuc[d]));
+    if (cakisma) {
+      const ek = "Aynı isim listede birden fazla kez geçiyor ama birleştirilemedi (aynı derste iki kayıt var) — lütfen kontrol edin";
+      sonuc.push({ ...r, uyari: r.uyari ? `${r.uyari} · ${ek}` : ek });
+      return;
+    }
+    const dersSonuc = {};
+    dersler.forEach((d) => {
+      const a = ilk.dersSonuc[d], b = r.dersSonuc[d];
+      dersSonuc[d] = dolu(a) ? a : (dolu(b) ? b : (a || b || { dogru: 0, yanlis: 0 }));
+    });
+    const dogrulama = dersSonucDogrula(dersSonuc, dersSoru);
+    const not = "Aynı öğrencinin 2 satırı birleştirildi; LGS puanı kısmi satırlardan hesaplanamadığı için boş bırakıldı — lütfen kontrol edin";
+    const eskiUyari = (!ilk.gecersiz && ilk.uyari && !ilk.birlestirildi) ? ilk.uyari : "";
+    sonuc[idx] = {
+      ...ilk, dersSonuc, puan: null,
+      no: ilk.no || r.no,
+      ogrenciId: ilk.ogrenciId || r.ogrenciId || null,
+      uyari: [eskiUyari, dogrulama, not].filter(Boolean).join(" · "),
+      gecersiz: !!dogrulama,
+      birlestirildi: true,
+    };
+  });
+  return sonuc;
+}
 const COK_SATIRLI_KAYIT_REGEX = /(\d{1,6})\s*-\s*([A-ZÇĞİÖŞÜ][^/]*?)(\d{1,2})\s*\/\s*([A-ZÇĞİÖŞÜ]\d{0,2})\s+([\d.,\s-]+?)(?=\d{1,6}\s*-\s*[A-ZÇĞİÖŞÜ]|$)/g;
 function pdfCokSatirliKayitlariAyikla(satirlar, dersSirasi, dersSoru = DERS_SORU) {
   const tumMetin = (satirlar || []).join(" ");
@@ -16410,7 +16468,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
       }).filter((r) => r.no || r.ad);
       if (sonuc.length === 0) { setHata("Satır bulunamadı. Dosyayı ve sütun eşleştirmesini kontrol edin."); return; }
       setSonDersSirasi(null);
-      setOnizleme(sonuc);
+      setOnizleme(ayniOgrencileriBirlestir(sonuc, aktifDersSoru));
     } else if (tur === "pdf") {
       // Metin kutusu içeriği (pdfMetin) PDF ilk yüklendiğinde OTOMATİK olarak hizalanmış/birleştirilmiş
       // olsa da, bazı satırlar (ör. ismi bir üst satıra taşmış ya da okul numarası iki parçaya bölünmüş
@@ -16431,7 +16489,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
       const dersSirasi = pdfDersSirasiBul(satirlarMetin, aktifDersler, aktifAliasListesi);
       const yapisalSonuc = satirlarMetin
         .map((satir) => {
-          const r = pdfSatirAyristir(satir, dersSirasi, aktifDersSoru);
+          const r = pdfSatirAyristir(satir, dersSirasi, aktifDersSoru, seviye);
           if (!r) return null;
           return { ...r, ogrenciId: ogrenciEslestir(r.no, r.ad) };
         })
@@ -16472,7 +16530,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
         const enCokGecenSinif = Object.entries(sinifSayaci).sort((a, b) => b[1] - a[1])[0];
         if (enCokGecenSinif) setHedefSinif(enCokGecenSinif[0]);
         setSonDersSirasi(dersSirasi);
-        setOnizleme(enIyiYapisalSonuc);
+        setOnizleme(ayniOgrencileriBirlestir(enIyiYapisalSonuc, aktifDersSoru));
         return;
       }
       // 2. deneme (yedek): yukarıdaki tablo biçimine uymayan, daha basit "No İsim D Y D Y ..." tarzı
@@ -16506,7 +16564,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
       }).filter((r) => r.no || r.ad);
       if (sonuc.length === 0) { setHata("Metinden satır ayıklanamadı. Aşağıdaki kutudan metni düzenleyip tekrar deneyin."); return; }
       setSonDersSirasi(null);
-      setOnizleme(sonuc);
+      setOnizleme(ayniOgrencileriBirlestir(sonuc, aktifDersSoru));
     }
   };
 
@@ -16530,7 +16588,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
       const enCokGecenSinif = Object.entries(sinifSayaci).sort((a, b) => b[1] - a[1])[0];
       if (enCokGecenSinif) setHedefSinif(enCokGecenSinif[0]);
       setSonDersSirasi(null);
-      setOnizleme(sonuclandi);
+      setOnizleme(ayniOgrencileriBirlestir(sonuclandi, aktifDersSoru));
     } catch (err) {
       console.error("AI ile ayrıştırma hatası:", err);
       setHata("AI ile ayrıştırma sırasında bir hata oluştu: " + (err.message || String(err)));
