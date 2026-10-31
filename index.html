@@ -17528,6 +17528,33 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
     }
   };
 
+  // Seçili denemenin ADINI değiştirir. Denemeler her yerde (sonuçlar, ek bilgiler, raporlar) "id" ile
+  // eşleştiği için yalnızca "ad" alanı güncellenir; kayıtlı sonuçlara dokunulmaz. Aynı ada sahip başka bir
+  // deneme olamaz. "3./5./6. Deneme" adları sistemde hazır okul ortalamalarına/verilerine bağlı olduğundan,
+  // bu adlardan birini değiştirirken (veya bu adlardan birini verirken) onay istenir.
+  const denemeAdiDegistir = () => {
+    if (tumDenemelerMi || !denemeSecili || !updateDenemeler) return;
+    const deneme = denemeler.find((d) => d.id === denemeSecili);
+    if (!deneme) return;
+    const girilen = window.prompt("Denemenin yeni adı:", deneme.ad || "");
+    if (girilen === null) return;
+    const yeniAd = girilen.trim();
+    if (!yeniAd || yeniAd === deneme.ad) return;
+    const kucuk = (x) => String(x || "").trim().toLocaleLowerCase("tr");
+    if (denemeler.some((d) => d.id !== deneme.id && kucuk(d.ad) === kucuk(yeniAd))) {
+      window.alert(`"${yeniAd}" adında başka bir deneme zaten var. Lütfen farklı bir ad girin.`);
+      return;
+    }
+    const ozelAdlar = [DENEME3_AD, DENEME5_AD, DENEME6_AD];
+    if (ozelAdlar.includes(deneme.ad) || ozelAdlar.includes(yeniAd)) {
+      const onay = window.confirm(
+        `"3. Deneme", "5. Deneme" ve "6. Deneme" adları sistemdeki hazır okul verilerine/ortalamalarına bağlıdır. Bu ad değişirse o denemeye ait hazır ortalama bilgisi görünmeyebilir. Sonuçlar silinmez.\n\nYine de "${yeniAd}" olarak değiştirilsin mi?`
+      );
+      if (!onay) return;
+    }
+    updateDenemeler(denemeler.map((d) => (d.id === deneme.id ? { ...d, ad: yeniAd } : d)));
+  };
+
   // Seçili DENEMENİN TAMAMINI (tüm şubelerdeki tüm öğrencilerin bu denemedeki sonuçları dahil)
   // kalıcı olarak siler. "Tüm Denemeler (Ortalama)" seçiliyken kullanılamaz, çünkü o gerçek bir
   // deneme kaydı değildir.
@@ -17637,7 +17664,7 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
         </div>
         {(( sinifFiltre && !tumDenemelerMi) || (!tumDenemelerMi && denemeSecili && updateDenemeler)) && (
           <div className="relative ml-auto shrink-0" ref={islemMenuRef}>
-            <button type="button" onClick={() => setIslemMenuAcik((v) => !v)} title="Silme işlemleri"
+            <button type="button" onClick={() => setIslemMenuAcik((v) => !v)} title="Deneme işlemleri"
               className="w-12 h-12 rounded-full flex items-center justify-center" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
               <IconDotsVertical size={20} color={SUBTLE} />
             </button>
@@ -17652,6 +17679,16 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
                     style={{ color: RED }}>
                     <IconTrash size={18} color={RED} />
                     Toplu Sil ({sinifTablosuGosterim.filter((s) => s.net !== null || s.puan != null).length})
+                  </button>
+                )}
+                {!tumDenemelerMi && denemeSecili && updateDenemeler && (
+                  <button type="button"
+                    onClick={() => { setIslemMenuAcik(false); denemeAdiDegistir(); }}
+                    title="Seçili denemenin adını değiştir"
+                    className="w-full text-left px-3 py-3 rounded-md text-base font-medium flex items-center gap-2.5"
+                    style={{ color: INK }}>
+                    <IconEdit size={18} color={SUBTLE} />
+                    Deneme Adını Değiştir
                   </button>
                 )}
                 {!tumDenemelerMi && denemeSecili && updateDenemeler && (
