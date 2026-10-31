@@ -15644,6 +15644,53 @@ function satirlariKaynastir(satirlarObjHam) {
 // sayıda dersi tek kelimeyle (ör. "Türkçe", "SOSYAL", "Din", "İngilizce", "Matematik", "Fen") tanıyan
 // satırı bulur ve derslerin o satırdaki soldan sağa görülme sırasını döndürür. Yeterli eşleşme
 // bulunamazsa DERSLER'deki varsayılan sırayı kullanır.
+// Bazı raporlarda (ör. Atatürk Ortaokulu "Türkiye Geneli Deneme") ders başlıkları birden fazla satıra
+// bölünür ("SOSYAL" üstte, "BİLGİLER" altta; "YABANCI" ve "DİL" ayrı kelime). Satır bazlı başlık
+// araması (pdfDersSirasiBul) bu durumda dersin yalnızca bir kısmını bulup eksik/yanlış bir sıra döndürür
+// ve tüm dersler kayar. Bu fonksiyon başlık bölgesindeki kelimeleri X KONUMUNA göre soldan sağa dizer;
+// YALNIZCA hiçbir tek satır tüm dersleri bulamıyorsa VE konum bazlı arama tüm dersleri bulabiliyorsa,
+// sayfa metnine tam ders sırasını içeren sentetik bir başlık satırı döndürür (aksi halde null: eski
+// formatlar etkilenmez).
+function pdfBaslikSatiriUret(satirlarObj, dersler, aliasListesi) {
+  try {
+    const hedef = (dersler || []).length;
+    if (hedef < 3) return null;
+    const ilkVeriIdx = satirlarObj.findIndex((s) => /^\*?\s*\d{1,4}\s+\S.*\d,\d{2}/.test(s.metin || ""));
+    if (ilkVeriIdx <= 0) return null;
+    const baslikSatirlari = satirlarObj.slice(0, ilkVeriIdx);
+    // 1) Tek satırda tüm dersler zaten bulunuyorsa dokunma.
+    for (const sat of baslikSatirlari) {
+      const kel = (sat.metin || "").trim().split(/\s+/).filter(Boolean);
+      if (kel.length < 2 || kel.length > 20) continue;
+      const bul = [];
+      kel.forEach((k) => { const d = dersEslestir([k], aliasListesi); if (d && !bul.includes(d)) bul.push(d); });
+      if (bul.length >= hedef) return null;
+    }
+    // 2) Konum bazlı: başlık kelimelerini (ve bitişik kelime çiftlerini) derse eşle, X'e göre sırala.
+    const bulunan = new Map();
+    baslikSatirlari.forEach((sat) => {
+      const pr = (sat.parcalar || []).slice().sort((a, b) => a.x - b.x);
+      for (let i = 0; i < pr.length; i++) {
+        let d = null, x = pr[i].x;
+        if (i + 1 < pr.length) {
+          const birlesikAd = normalizeTr(pr[i].str + pr[i + 1].str);
+          const e = (aliasListesi || []).find((a) => a.alias === birlesikAd);
+          if (e) { d = e.ders; i++; }
+        }
+        if (!d) d = dersEslestir([pr[i].str], aliasListesi);
+        if (d && !bulunan.has(d)) bulunan.set(d, x);
+      }
+    });
+    if (bulunan.size !== hedef) return null;
+    const sirali = Array.from(bulunan.entries()).sort((a, b) => a[1] - b[1]).map((e) => e[0]);
+    const kelimeler = sirali.map((d) => {
+      const a = (aliasListesi || []).find((e) => e.ders === d);
+      return a ? a.alias : null;
+    });
+    if (kelimeler.some((k) => !k)) return null;
+    return kelimeler.join(" ");
+  } catch (e) { return null; }
+}
 function pdfDersSirasiBul(satirlar, dersler = DERSLER, aliasListesi = ALIAS_LISTESI_UZUNA_GORE) {
   let enIyiSira = null, enIyiSkor = 0;
   for (const satir of satirlar) {
@@ -16411,6 +16458,8 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
             // bulunursa), öğrenci satırlarındaki sayılar sıraya göre değil KONUMA göre yeniden dizilir
             // — böylece boş bırakılan bir ders, sonraki dersleri kaydırmaz (bkz. dersSutunSinirlariniBul).
             const dersSinirlari = dersSutunSinirlariniBul(satirlarObj, aktifDersler.length) || dersSutunSinirlariniBulVeriden(satirlarObj, aktifDersler.length);
+            const sentetikBaslik = pdfBaslikSatiriUret(satirlarObj, aktifDersler, aktifAliasListesi);
+            if (sentetikBaslik) sayfaMetni += sentetikBaslik + "\n";
             satirlarObj.forEach(({ parcalar, metin: satirMetni }) => {
               sayfaMetni += (dersSinirlari ? satirNumaralariniHizala(parcalar, satirMetni, dersSinirlari) : satirMetni) + "\n";
             });
