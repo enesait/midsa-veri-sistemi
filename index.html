@@ -15074,7 +15074,7 @@ function DenemelerIc({ silmeKontrol, students, updateStudents, denemeler, deneme
           );
         })}
       </div>
-      {altSekme === "giris" && <DenemeGiris students={students} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} denemeSecili={denemeSecili} setDenemeSecili={setDenemeSecili} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre} altSekme={altSekme} setAltSekme={setAltSekme} siniflar={siniflar} />}
+      {altSekme === "giris" && <DenemeGiris silmeKontrol={silmeKontrol} updateStudents={updateStudents} students={students} denemeler={denemeler} updateDenemeler={updateDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} denemeSecili={denemeSecili} setDenemeSecili={setDenemeSecili} sinifFiltre={sinifFiltre} setSinifFiltre={setSinifFiltre} altSekme={altSekme} setAltSekme={setAltSekme} siniflar={siniflar} />}
       {altSekme === "iceAktar" && <DenemeIceAktar denemeTuru={denemeTuru} students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} setAltSekme={setAltSekme} setDenemeSecili={setDenemeSecili} />}
       {altSekme === "ilk50" && <DenemeIlk50 students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} denemeEkBilgi={denemeEkBilgi} onTumSonuclar={() => setAltSekme("giris")} />}
       {altSekme === "sinif" && <DenemeSinifKiyas students={students} denemeler={denemeler} denemeSonuclari={denemeSonuclari} />}
@@ -17401,7 +17401,7 @@ function OptikOkuyucuModal({ ders, onClose, onUygula }) {
   );
 }
 
-function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, updateDenemeSonuclari, denemeEkBilgi, updateDenemeEkBilgi, denemeSecili, setDenemeSecili, sinifFiltre, setSinifFiltre, altSekme, setAltSekme, siniflar = SINIFLAR }) {
+function DenemeGiris({ silmeKontrol, updateStudents, students, denemeler, updateDenemeler, denemeSonuclari, updateDenemeSonuclari, denemeEkBilgi, updateDenemeEkBilgi, denemeSecili, setDenemeSecili, sinifFiltre, setSinifFiltre, altSekme, setAltSekme, siniflar = SINIFLAR }) {
   // Boş değer ("") "Tüm Şubeler" anlamına gelir.
   const tumSubelerMi = sinifFiltre === "";
   const sinifOgrencileri = useMemo(() => students.filter((s) => tumSubelerMi || s.sinif === sinifFiltre).sort((a, b) => a.ad.localeCompare(b.ad, "tr")), [students, sinifFiltre, tumSubelerMi]);
@@ -17591,9 +17591,6 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
     );
     if (!onay) return;
     const silinecekIdSeti = new Set(silinecekOgrenciler.map((o) => o.id));
-    if (silinecekIdSeti.size > 0 && updateStudents) {
-      updateStudents(students.filter((o) => !silinecekIdSeti.has(o.id)));
-    }
     const kalanDenemeler = denemeler.filter((d) => d.id !== denemeSecili);
     updateDenemeler(kalanDenemeler);
     if (updateDenemeSonuclari) {
@@ -17612,6 +17609,10 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
       updateDenemeEkBilgi(de2);
     }
     setDenemeSecili(kalanDenemeler.length ? kalanDenemeler[kalanDenemeler.length - 1].id : "");
+    // Öğrenci kayıtları en son silinir: bu sırada deneme sonuçları zaten kaldırılmış olur.
+    if (silinecekIdSeti.size > 0 && updateStudents) {
+      updateStudents(students.filter((o) => !silinecekIdSeti.has(o.id)));
+    }
   };
 
   const tumDenemelerMi = denemeSecili === TOPLAM_DENEME_ID;
