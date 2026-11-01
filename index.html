@@ -296,6 +296,39 @@ function adBenzerMi(a, b) {
   const esik = Math.max(1, Math.floor(Math.min(a.length, b.length) * 0.34));
   return mesafe <= esik;
 }
+// Türkçe harf farkını (İ/I, Ş/S, Ğ/G, Ü/U, Ö/O, Ç/C) yok sayan, karşılaştırma için sadeleştirilmiş ad.
+function adSadelestir(ad) {
+  return adNormallestir(ad)
+    .replace(/[İÎ]/g, "I").replace(/Ş/g, "S").replace(/Ğ/g, "G")
+    .replace(/[ÜÛ]/g, "U").replace(/Ö/g, "O").replace(/Ç/g, "C").replace(/Â/g, "A");
+}
+// Okul numarası OLMAYAN satırlar (ör. Atatürk "Türkiye Geneli Deneme") için, mevcut eşleştirme (ad birebir
+// ve benzersiz / soyadı aynı + ön ad benzer) hiçbir sonuç veremediğinde çalışan EK adımlar. Eski
+// eşleştirmenin verdiği hiçbir sonucu DEĞİŞTİRMEZ; yalnızca eskiden "eşleşmedi" kalan satırlara bakar.
+// Güvenlik: her adımda tek bir aday olmalıdır. Aynı isimde birden fazla kayıt varsa eşleştirilmez
+// (öğretmen listeden elle seçer; seçmezse satır yeni öğrenci olarak eklenir). Ayrıca eşleşmeyen satır
+// için kullanıcıya gösterilecek kısa bir "neden" metni üretir.
+function ogrenciEkEslestir(ad, sinif, ogrenciler) {
+  const k = adSadelestir(ad);
+  if (!k || k.length < 5) return { id: null, neden: "" };
+  const liste = (ogrenciler || []).map((s) => ({ s, k: adSadelestir(s.ad) })).filter((x) => x.k);
+  const tanim = (x) => `${x.s.ad}${x.s.no ? ` (${x.s.no})` : ""} · ${x.s.sinif || "?"}`;
+  // 1) Türkçe karakter farkı yok sayılınca birebir aynı ad
+  const ayni = liste.filter((x) => x.k === k);
+  if (ayni.length === 1) return { id: ayni[0].s.id, neden: "" };
+  if (ayni.length > 1) {
+    return { id: null, neden: `Sistemde bu isimde ${ayni.length} kayıt var (${ayni.map((x) => x.s.sinif || "?").join(", ")}) — listeden elle seçin; seçmezseniz yeni öğrenci olarak eklenir` };
+  }
+  // 2) Tek harflik yazım farkı: satırın şubesi biliniyorsa AYNI ŞUBEDE ve TEK aday
+  const yakinlar = liste
+    .map((x) => ({ ...x, d: levenshteinMesafe(x.k, k) }))
+    .filter((x) => x.d <= 2)
+    .sort((a, b) => a.d - b.d);
+  const birFark = sinif ? yakinlar.filter((x) => x.d === 1 && x.s.sinif === sinif) : [];
+  if (k.length >= 8 && birFark.length === 1) return { id: birFark[0].s.id, neden: "" };
+  if (yakinlar.length > 0) return { id: null, neden: `En yakın kayıt: ${tanim(yakinlar[0])} — doğruysa listeden seçin` };
+  return { id: null, neden: "Sistemde bu isme benzer kayıt bulunamadı — yeni öğrenci olarak eklenir" };
+}
 // Okul numaralarını karşılaştırılabilir hale getirir: baştaki sıfırları atar (ör. "00247" ve "247"
 // aynı sayı sayılır). Aynı öğrenci bazen elle ("247"), bazen PDF/Excel içe aktarımıyla ("00247", raporun
 // standart 5 haneli biçimiyle) sisteme girmiş olabilir — bu ikisi salt METİN olarak karşılaştırılırsa
@@ -16339,6 +16372,11 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
     students.forEach((s) => { const ad = adNormallestir(s.ad); if (ad && sayac[ad] === 1) harita[ad] = s.id; });
     return harita;
   }, [students]);
+  // Okul numarası olmayan ve eşleşmeyen satırlar için "neden eşleşmedi / en yakın kayıt" açıklaması.
+  const eslesmeNedenleri = useMemo(
+    () => (onizleme || []).map((r) => ((!r.ogrenciId && !r.no && r.ad) ? ogrenciEkEslestir(r.ad, r.sinif, students).neden : "")),
+    [onizleme, students]
+  );
   // İçe aktarılan bir satırı sistemdeki öğrenciyle eşleştirir: önce okul numarasına (baştaki sıfırlar
   // yok sayılarak — bkz. noNormallestir — çünkü aynı öğrenci bazen elle "247", bazen PDF içe
   // aktarımıyla "00247" olarak kayıtlı olabilir; en güvenilir alan budur, İSİM YANLIŞ/EKSİK YAZILMIŞ
@@ -16348,7 +16386,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
   // yalnızca aynı soyada sahip TEK bir öğrenci bulunduğunda (belirsizlik yoksa) eşleştirir — okuldaki
   // iki farklı öğrenci aynı soyadı taşıyorsa (ör. kardeşler), riskli olacağından hiçbirini otomatik
   // eşleştirmez, öğretmenin elle seçmesi istenir.
-  const ogrenciEslestir = (no, ad) => {
+  const ogrenciEslestir = (no, ad, sinif) => {
     const noKey = noNormallestir(no);
     if (noKey !== "0" && noHaritasi[noKey]) return noHaritasi[noKey];
     const adKey = adNormallestir(ad);
@@ -16367,6 +16405,12 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
         });
         if (adaylar.length === 1) return adaylar[0].id;
       }
+    }
+    // Yeni: okul numarası olmayan satırlarda, yukarıdaki adımlar sonuç vermediyse ek adımlar (Türkçe karakter
+    // farkı, aynı şubede tek harf farkı). Numaralı satırların davranışı değişmez.
+    if (noKey === "0") {
+      const ek = ogrenciEkEslestir(ad, sinif, students);
+      if (ek.id) return ek.id;
     }
     return null;
   };
@@ -16581,7 +16625,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
         .map((satir) => {
           const r = pdfSatirAyristir(satir, dersSirasi, aktifDersSoru, seviye);
           if (!r) return null;
-          return { ...r, ogrenciId: ogrenciEslestir(r.no, r.ad) };
+          return { ...r, ogrenciId: ogrenciEslestir(r.no, r.ad, r.sinif) };
         })
         .filter(Boolean);
       // 1b. deneme: "Fenomen Okul" tarzı, öğrenci kaydının Sıra/Ad/Okul/Sınıf bilgisinin BİRDEN FAZLA
@@ -16589,7 +16633,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
       // Yukarıdaki tek-satırlık ayrıştırıcı böyle bir dosyada ya hiç ya da çok az satır yakalar; bu
       // yüzden iki yöntemden HANGİSİ daha çok kayıt buluyorsa o kullanılır.
       const cokSatirliSonuc = pdfCokSatirliKayitlariAyikla(satirlarMetin, dersSirasi, aktifDersSoru)
-        .map((r) => ({ ...r, ogrenciId: ogrenciEslestir(r.no, r.ad) }));
+        .map((r) => ({ ...r, ogrenciId: ogrenciEslestir(r.no, r.ad, r.sinif) }));
       let enIyiYapisalSonuc = cokSatirliSonuc.length > yapisalSonuc.length ? cokSatirliSonuc : yapisalSonuc;
       if (enIyiYapisalSonuc.length > 0) {
         // Bazı satırlarda okul numarası PDF'ten eksik/hatalı hane ile okunmuş olabilir (ör. listede
@@ -16672,7 +16716,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
         setHata("AI ile de öğrenci satırı bulunamadı. PDF metnini kontrol edip elle düzenledikten sonra tekrar deneyebilirsiniz.");
         return;
       }
-      const sonuclandi = kayitlar.map((r) => ({ ...r, ogrenciId: ogrenciEslestir(r.no, r.ad) }));
+      const sonuclandi = kayitlar.map((r) => ({ ...r, ogrenciId: ogrenciEslestir(r.no, r.ad, r.sinif) }));
       const sinifSayaci = {};
       sonuclandi.forEach((r) => { if (r.sinif && siniflar.includes(r.sinif)) sinifSayaci[r.sinif] = (sinifSayaci[r.sinif] || 0) + 1; });
       const enCokGecenSinif = Object.entries(sinifSayaci).sort((a, b) => b[1] - a[1])[0];
@@ -16756,6 +16800,16 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
     let yeniEklenenSayisi = 0;
     // Oto-oluşturma açıksa: eşleşmemiş ama ders sonucu olan satırlar için önce yeni öğrenci kaydı oluştur.
     if (otoOgrenciOlustur) {
+      // Sistemde bulunamayıp YENİ öğrenci olarak eklenecek satırlar varsa, kaydetmeden önce isimleriyle onay
+      // iste: kayıtlı bir öğrencinin yanlışlıkla ikinci kez eklenmesi engellenir.
+      const yeniAdaylar = onizleme.filter((r) => kaydedilebilirMi(r) && !r.ogrenciId && Object.keys(r.dersSonuc).length > 0);
+      if (yeniAdaylar.length > 0) {
+        const liste = yeniAdaylar.slice(0, 10).map((r) => `${r.ad}${r.sinif ? ` (${r.sinif})` : ""}`).join(", ");
+        const onayYeni = window.confirm(
+          `Sistemde bulunamayan ${yeniAdaylar.length} öğrenci YENİ öğrenci olarak eklenecek:\n\n${liste}${yeniAdaylar.length > 10 ? " …" : ""}\n\nBunlar zaten kayıtlıysa İPTAL deyip önizlemede "Eşleşen Öğrenci" listesinden elle seçin. Devam edilsin mi?`
+        );
+        if (!onayYeni) return;
+      }
       const yeniOgrenciler = [];
       guncelStudents = students.map((s) => s); // kopya
       const guncelOnizleme = onizleme.map((r) => {
@@ -17015,7 +17069,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
                   return (
                   <tr key={i} className="ripple-row" style={{ borderTop: `1px solid ${BORDER}`, background: gercektenEngelli ? `${RED}14` : (r.gecersiz ? `${YELLOW}14` : (r.ogrenciId ? "transparent" : (yeniOlarakEklenecek ? `${GREEN}0A` : `${RED}0A`))) }}>
                     <td className="px-2 py-1.5 font-mono">{r.no || "—"}</td>
-                    <td className="px-2 py-1.5">{r.ad || "—"}{r.uyari && <div style={{ color: gercektenEngelli ? RED : YELLOW }}>{gercektenEngelli ? "⚠ " : ""}{r.uyari}</div>}</td>
+                    <td className="px-2 py-1.5">{r.ad || "—"}{r.uyari && <div style={{ color: gercektenEngelli ? RED : YELLOW }}>{gercektenEngelli ? "⚠ " : ""}{r.uyari}</div>}{!r.ogrenciId && eslesmeNedenleri[i] && <div style={{ color: SUBTLE }}>{eslesmeNedenleri[i]}</div>}</td>
                     <td className="px-2 py-1.5">
                       {r.sinifSorunu ? (
                         <select value={eklenecekSinif} onChange={(e) => sinifSecildi(i, r, e.target.value)}
