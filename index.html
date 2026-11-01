@@ -441,11 +441,19 @@ const bransDenemesiMi = (d) => !!d && d.tur === "brans";
 // listeye karşı türdeki denemelere dokunmadan geri yazar.
 const denemeListesiBirlestir = (tum, yeniListe, bransMod) => {
   const yeniHarita = new Map((yeniListe || []).map((d) => [d.id, d]));
+  // Aynı türdeki denemelerin YENİ sırası (sıra değiştirme): tam listedeki bu türe ait "yuvalar"
+  // sırasıyla yeni listedeki sıraya göre doldurulur; diğer türdeki denemeler yerinde kalır.
+  const tumIdler = new Set((tum || []).map((d) => d.id));
+  const yeniSirali = (yeniListe || []).filter((d) => tumIdler.has(d.id));
+  let yuva = 0;
   const kullanilan = new Set();
   const sonuc = [];
   (tum || []).forEach((d) => {
     if (bransDenemesiMi(d) !== bransMod) { sonuc.push(d); return; }
-    if (yeniHarita.has(d.id)) { sonuc.push(yeniHarita.get(d.id)); kullanilan.add(d.id); }
+    if (yeniHarita.has(d.id)) {
+      const sec = yeniSirali[yuva++] || yeniHarita.get(d.id);
+      sonuc.push(sec); kullanilan.add(sec.id);
+    }
   });
   (yeniListe || []).forEach((d) => { if (!kullanilan.has(d.id)) sonuc.push(d); });
   return sonuc;
@@ -17411,6 +17419,7 @@ function DenemeGiris({ silmeKontrol, updateStudents, students, denemeler, update
   const [noArama, setNoArama] = useState("");
   // Toplu Sil / Denemeyi Sil işlemlerini tek bir üç nokta menüsünde toplar.
   const [islemMenuAcik, setIslemMenuAcik] = useState(false);
+  const [siralamaAcik, setSiralamaAcik] = useState(false);
   const islemMenuRef = useRef(null);
   useEffect(() => {
     const disariTikla = (e) => { if (islemMenuRef.current && !islemMenuRef.current.contains(e.target)) setIslemMenuAcik(false); };
@@ -17526,6 +17535,18 @@ function DenemeGiris({ silmeKontrol, updateStudents, students, denemeler, update
       hedefListe.forEach((s) => delete mevcutEk[s.id]);
       updateDenemeEkBilgi({ ...(denemeEkBilgi || {}), [denemeSecili]: mevcutEk });
     }
+  };
+
+  // Denemenin listedeki sırasını bir adım yukarı (-1) ya da aşağı (+1) taşır. Sıra, denemeler
+  // dizisinin sırasıdır (liste, grafikler ve varsayılan seçim bu sırayı kullanır).
+  const denemeTasi = (id, yon) => {
+    if (!updateDenemeler) return;
+    const idx = denemeler.findIndex((d) => d.id === id);
+    const hedef = idx + yon;
+    if (idx < 0 || hedef < 0 || hedef >= denemeler.length) return;
+    const yeni = denemeler.slice();
+    const gecici = yeni[idx]; yeni[idx] = yeni[hedef]; yeni[hedef] = gecici;
+    updateDenemeler(yeni);
   };
 
   // Seçili denemenin ADINI değiştirir. Denemeler her yerde (sonuçlar, ek bilgiler, raporlar) "id" ile
@@ -17725,6 +17746,16 @@ function DenemeGiris({ silmeKontrol, updateStudents, students, denemeler, update
                     Deneme Adını Değiştir
                   </button>
                 )}
+                {!tumDenemelerMi && denemeSecili && updateDenemeler && denemeler.length > 1 && (
+                  <button type="button"
+                    onClick={() => { setIslemMenuAcik(false); setSiralamaAcik(true); }}
+                    title="Denemelerin listedeki sırasını değiştir"
+                    className="w-full text-left px-3 py-3 rounded-md text-base font-medium flex items-center gap-2.5"
+                    style={{ color: INK }}>
+                    <span className="w-[18px] text-center text-lg leading-none" style={{ color: SUBTLE }}>↕</span>
+                    Deneme Sırasını Değiştir
+                  </button>
+                )}
                 {!tumDenemelerMi && denemeSecili && updateDenemeler && (
                   <button type="button"
                     onClick={() => { setIslemMenuAcik(false); denemeSilOnayla(); }}
@@ -17740,6 +17771,29 @@ function DenemeGiris({ silmeKontrol, updateStudents, students, denemeler, update
           </div>
         )}
       </Kart>
+
+      {siralamaAcik && updateDenemeler && (
+        <Kart className="mb-6 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-base font-medium">Deneme Sırası</p>
+            <button type="button" onClick={() => setSiralamaAcik(false)}
+              className="text-sm font-medium px-3 py-1.5 rounded-full" style={{ color: ORANGE }}>Kapat</button>
+          </div>
+          <p className="text-xs mb-3" style={{ color: SUBTLE }}>Oklarla denemelerin listedeki sırasını değiştirin. Liste ve grafikler bu sırayı kullanır; sekme açıldığında en alttaki deneme seçili gelir.</p>
+          {denemeler.map((d, i) => (
+            <div key={d.id} className="flex items-center gap-2 py-2" style={{ borderTop: i ? `1px solid ${BORDER}` : "none" }}>
+              <span className="w-6 text-sm text-center shrink-0" style={{ color: SUBTLE }}>{i + 1}</span>
+              <span className="flex-1 min-w-0 text-base truncate" style={{ color: INK, fontWeight: d.id === denemeSecili ? 600 : 400 }}>{d.ad}</span>
+              <button type="button" disabled={i === 0} onClick={() => denemeTasi(d.id, -1)} title="Yukarı taşı"
+                className="w-10 h-10 rounded-full flex items-center justify-center text-base disabled:opacity-30 shrink-0"
+                style={{ background: SURFACE, border: `1px solid ${BORDER}`, color: INK }}>▲</button>
+              <button type="button" disabled={i === denemeler.length - 1} onClick={() => denemeTasi(d.id, 1)} title="Aşağı taşı"
+                className="w-10 h-10 rounded-full flex items-center justify-center text-base disabled:opacity-30 shrink-0"
+                style={{ background: SURFACE, border: `1px solid ${BORDER}`, color: INK }}>▼</button>
+            </div>
+          ))}
+        </Kart>
+      )}
 
       {!ogrenciSecili ? (
         sinifTablosuGosterim.length === 0 ? <Bos mesaj={noArama.trim() ? "Bu numarayla eşleşen öğrenci yok" : "Bu şubede öğrenci yok"} /> : (
