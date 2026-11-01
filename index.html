@@ -300,7 +300,11 @@ function adBenzerMi(a, b) {
 function adSadelestir(ad) {
   return adNormallestir(ad)
     .replace(/[İÎ]/g, "I").replace(/Ş/g, "S").replace(/Ğ/g, "G")
-    .replace(/[ÜÛ]/g, "U").replace(/Ö/g, "O").replace(/Ç/g, "C").replace(/Â/g, "A");
+    .replace(/[ÜÛ]/g, "U").replace(/Ö/g, "O").replace(/Ç/g, "C").replace(/Â/g, "A")
+    // İsmin başındaki/sonundaki harf-rakam olmayan karakterleri ("- ", "• ", "* " gibi liste işaretleri) yok say.
+    // Yalnızca karşılaştırma içindir; sistemdeki ad değiştirilmez.
+    .replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/g, "")
+    .replace(/\s+/g, " ");
 }
 // Okul numarası OLMAYAN satırlar (ör. Atatürk "Türkiye Geneli Deneme") için, mevcut eşleştirme (ad birebir
 // ve benzersiz / soyadı aynı + ön ad benzer) hiçbir sonuç veremediğinde çalışan EK adımlar. Eski
