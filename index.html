@@ -5885,7 +5885,7 @@ function StudentTracker() {
           {tab === "notlar" && <Notlar students={students} grades={grades} updateGrades={updateGrades} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "kocluk" && <Kocluk kocluklSiniflar={kocluklSiniflar} updateKocluklSiniflar={updateKocluklSiniflar} kocluklOgrenciler={kocluklOgrenciler} updateKocluklOgrenciler={updateKocluklOgrenciler} students={students} soruCozum={soruCozum} updateSoruCozum={updateSoruCozum} kitapKontrol={kitapKontrol} updateKitapKontrol={updateKitapKontrol} kocDevam={kocDevam} updateKocDevam={updateKocDevam} koclukNotlari={koclukNotlari} updateKoclukNotlari={updateKoclukNotlari} koclukGorusleri={koclukGorusleri} updateKoclukGorusleri={updateKoclukGorusleri} kazanimListesi={kazanimListesi} updateKazanimListesi={updateKazanimListesi} koclukKazanimTakip={koclukKazanimTakip} updateKoclukKazanimTakip={updateKoclukKazanimTakip} plan={plan} kullaniciAdi={kullaniciAdi} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
           {tab === "dersIci" && <DersIci students={students} siniflar={siniflar} dersIciDersler={dersIciDersler} updateDersIciDersler={updateDersIciDersler} dersIciOdev={dersIciOdev} updateDersIciOdev={updateDersIciOdev} dersIciKitap={dersIciKitap} updateDersIciKitap={updateDersIciKitap} dersIciKatilim={dersIciKatilim} updateDersIciKatilim={updateDersIciKatilim} dersIciDefter={dersIciDefter} updateDersIciDefter={updateDersIciDefter} dersIciOkumaKitabi={dersIciOkumaKitabi} updateDersIciOkumaKitabi={updateDersIciOkumaKitabi} kullaniciAdi={kullaniciAdi} hizliGit={hizliGit} hizliGitTuketildi={hizliGitTuketildi} />}
-          {tab === "denemeler" && <Denemeler students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} />}
+          {tab === "denemeler" && <Denemeler silmeKontrol={{ grades, attendance, attendanceMeta, dersYoklama, davranisUyarilari, davranisNotlari, kocluklOgrenciler }} students={students} updateStudents={updateStudents} denemeler={denemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} updateDenemeler={updateDenemeler} denemeEkBilgi={denemeEkBilgi} updateDenemeEkBilgi={updateDenemeEkBilgi} plan={plan} telegramKullaniciAdi={telegramKullaniciAdi} siniflar={siniflar} />}
           {tab === "optik" && (plan === "premium" ? <OptikOkuyucuSayfa students={students} updateStudents={updateStudents} denemeler={genelDenemeler} updateDenemeler={updateGenelDenemeler} denemeSonuclari={denemeSonuclari} updateDenemeSonuclari={updateDenemeSonuclari} siniflar={siniflar} /> : <PremiumKilit baslik="Optik Okuyucu" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "sinifTemizligi" && (plan === "premium" ? <SinifTemizligi sinifTemizligi={sinifTemizligi} updateSinifTemizligi={updateSinifTemizligi} /> : <PremiumKilit baslik="Sınıf Temizliği" telegramKullaniciAdi={telegramKullaniciAdi} />)}
           {tab === "sinifNobet" && <SinifNobet sinifNobet={sinifNobet} updateSinifNobet={updateSinifNobet} />}
@@ -15037,7 +15037,7 @@ function Denemeler(props) {
     </div>
   );
 }
-function DenemelerIc({ students, updateStudents, denemeler, denemeSonuclari, updateDenemeSonuclari, updateDenemeler, denemeEkBilgi, updateDenemeEkBilgi, plan, telegramKullaniciAdi, siniflar, denemeTuru }) {
+function DenemelerIc({ silmeKontrol, students, updateStudents, denemeler, denemeSonuclari, updateDenemeSonuclari, updateDenemeler, denemeEkBilgi, updateDenemeEkBilgi, plan, telegramKullaniciAdi, siniflar, denemeTuru }) {
   const [altSekme, setAltSekme] = useState("giris");
   // denemeler dizisine yeni denemeler sona eklenir, bu yüzden en son yapılan deneme dizinin son
   // elemanıdır — sekmeye girildiğinde varsayılan olarak o seçili gelsin diye [0] yerine son eleman alınır.
@@ -16756,7 +16756,7 @@ function DenemeIceAktar({ students, updateStudents, denemeler, denemeSonuclari, 
           // Satırda PDF/AI'dan geçerli bir şube okunduysa öğrenci KENDİ şubesine eklenir; şube hiç
           // okunamadıysa (okulun kayıtlı sınıf listesinde yoksa) üstteki tek "hedef şube" seçimi yedek olarak kullanılır.
           const oncelikliSinif = r.sinif && siniflar.includes(r.sinif) ? r.sinif : hedefSinif;
-          yeniOgrenciler.push({ id: yeniId, ad: r.ad || `Öğrenci ${r.no || ""}`.trim(), sinif: oncelikliSinif, no: r.no || "" });
+          yeniOgrenciler.push({ id: yeniId, ad: r.ad || `Öğrenci ${r.no || ""}`.trim(), sinif: oncelikliSinif, no: r.no || "", kaynakDenemeId: hedefDenemeId });
           return { ...r, ogrenciId: yeniId };
         }
         return r;
@@ -17562,10 +17562,38 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
     if (tumDenemelerMi || !denemeSecili || !updateDenemeler) return;
     const deneme = denemeler.find((d) => d.id === denemeSecili);
     if (!deneme) return;
+    // Bu denemeyle (PDF/Excel içe aktarımında "otomatik oluştur" ile) sisteme EKLENEN öğrenciler de
+    // silinir. Güvenlik: yalnızca (1) bu denemeden eklenmiş olarak işaretli (kaynakDenemeId), (2) başka
+    // hiçbir denemede sonucu olmayan ve (3) not/yoklama/davranış/koçluk gibi başka verisi bulunmayan
+    // öğrenciler silinir. Önceden var olan (eşleşen) öğrencilere ve eski kayıtlara dokunulmaz.
+    const baskaVerisiVarMi = (id) => {
+      const k = silmeKontrol;
+      if (!k) return true;
+      const dolu = (v) => !!v && (Array.isArray(v) ? v.length > 0 : typeof v === "object" ? Object.keys(v).length > 0 : true);
+      if (dolu(k.grades?.[id]) || dolu(k.davranisUyarilari?.[id]) || dolu(k.davranisNotlari?.[id])) return true;
+      if (Object.values(k.attendance || {}).some((g) => g && g[id] !== undefined)) return true;
+      if (Object.values(k.attendanceMeta || {}).some((g) => g && g[id] !== undefined)) return true;
+      if (Object.values(k.dersYoklama || {}).some((t) => t && Object.values(t).some((d) => d && d[id] !== undefined))) return true;
+      if ((k.kocluklOgrenciler || []).some((o) => o && o.kaynakId === id)) return true;
+      return false;
+    };
+    const digerSonuclar = Object.entries(denemeSonuclari || {}).filter(([dId]) => dId !== denemeSecili);
+    const silinecekOgrenciler = (students || []).filter((o) =>
+      o.kaynakDenemeId === denemeSecili
+      && !digerSonuclar.some(([, kayit]) => kayit && kayit[o.id])
+      && !baskaVerisiVarMi(o.id)
+    );
+    const ogrenciNotu = silinecekOgrenciler.length > 0
+      ? `\n\nAyrıca bu denemenin içe aktarımıyla sisteme otomatik eklenen ve başka verisi olmayan ${silinecekOgrenciler.length} öğrenci de SİSTEMDEN silinecektir (${silinecekOgrenciler.slice(0, 6).map((o) => o.ad).join(", ")}${silinecekOgrenciler.length > 6 ? " …" : ""}).`
+      : "";
     const onay = window.confirm(
-      `"${deneme.ad}" denemesi ve bu denemeye ait TÜM ŞUBELERDEKİ TÜM ÖĞRENCİLERİN sonuçları kalıcı olarak silinecektir.\n\nBu işlem geri alınamaz. Devam edilsin mi?`
+      `"${deneme.ad}" denemesi ve bu denemeye ait TÜM ŞUBELERDEKİ TÜM ÖĞRENCİLERİN sonuçları kalıcı olarak silinecektir.${ogrenciNotu}\n\nBu işlem geri alınamaz. Devam edilsin mi?`
     );
     if (!onay) return;
+    const silinecekIdSeti = new Set(silinecekOgrenciler.map((o) => o.id));
+    if (silinecekIdSeti.size > 0 && updateStudents) {
+      updateStudents(students.filter((o) => !silinecekIdSeti.has(o.id)));
+    }
     const kalanDenemeler = denemeler.filter((d) => d.id !== denemeSecili);
     updateDenemeler(kalanDenemeler);
     if (updateDenemeSonuclari) {
@@ -17574,8 +17602,13 @@ function DenemeGiris({ students, denemeler, updateDenemeler, denemeSonuclari, up
       updateDenemeSonuclari(ds2);
     }
     if (updateDenemeEkBilgi && denemeEkBilgi) {
-      const de2 = { ...denemeEkBilgi };
-      delete de2[denemeSecili];
+      const de2 = {};
+      Object.entries(denemeEkBilgi).forEach(([dId, kayit]) => {
+        if (dId === denemeSecili) return;
+        const k2 = { ...kayit };
+        silinecekIdSeti.forEach((id) => delete k2[id]);
+        de2[dId] = k2;
+      });
       updateDenemeEkBilgi(de2);
     }
     setDenemeSecili(kalanDenemeler.length ? kalanDenemeler[kalanDenemeler.length - 1].id : "");
